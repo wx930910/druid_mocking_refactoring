@@ -92,6 +92,7 @@ public class CloseableIteratorTest {
 		int numFlatIterations = 5;
 		while (expected.hasNext() && actual.hasNext() && cnt++ < numFlatIterations) {
 			Assert.assertEquals(expected.next(), actual.next());
+
 		}
 		// but stop while we still have an open current inner iterator and a few
 		// remaining inner iterators
