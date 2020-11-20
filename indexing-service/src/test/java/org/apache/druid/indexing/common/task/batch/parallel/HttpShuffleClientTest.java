@@ -74,12 +74,19 @@ public class HttpShuffleClientTest {
 		}
 	}
 
+	private PartitionLocation<Integer> mockPartitionLocation() {
+		PartitionLocation<Integer> res = Mockito.mock(PartitionLocation.class,
+				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor(HOST, PORT, false,
+						SUBTASK_ID, INTERVAL, PARTITION_ID));
+		Mockito.when(res.getBucketId()).thenAnswer(invo -> res.getSecondaryPartition());
+		return res;
+	}
+
 	@Test
 	public void testFetchSegmentFileWithValidParamsReturningCopiedFileInPartitoinDir() throws IOException {
 		ShuffleClient shuffleClient = mockClient(0);
 		final File localDir = temporaryFolder.newFolder();
-		final File fetchedFile = shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID,
-				new TestPartitionLocation());
+		final File fetchedFile = shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID, mockPartitionLocation());
 		Assert.assertEquals(fetchedFile.getParentFile(), localDir);
 	}
 
@@ -87,15 +94,14 @@ public class HttpShuffleClientTest {
 	public void testFetchUnknownPartitionThrowingIOExceptionAfterRetries() throws IOException {
 		expectedException.expect(IOException.class);
 		ShuffleClient shuffleClient = mockClient(HttpShuffleClient.NUM_FETCH_RETRIES + 1);
-		shuffleClient.fetchSegmentFile(temporaryFolder.newFolder(), SUPERVISOR_TASK_ID, new TestPartitionLocation());
+		shuffleClient.fetchSegmentFile(temporaryFolder.newFolder(), SUPERVISOR_TASK_ID, mockPartitionLocation());
 	}
 
 	@Test
 	public void testFetchSegmentFileWithTransientFailuresReturningCopiedFileInPartitionDir() throws IOException {
 		ShuffleClient shuffleClient = mockClient(HttpShuffleClient.NUM_FETCH_RETRIES - 1);
 		final File localDir = temporaryFolder.newFolder();
-		final File fetchedFile = shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID,
-				new TestPartitionLocation());
+		final File fetchedFile = shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID, mockPartitionLocation());
 		Assert.assertEquals(fetchedFile.getParentFile(), localDir);
 	}
 
@@ -137,8 +143,8 @@ public class HttpShuffleClientTest {
 			}
 			for (int i = 0; i < 2; i++) {
 				final File localDir = localDirs.get(i);
-				futures.add(service.submit(() -> shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID,
-						new TestPartitionLocation())));
+				futures.add(service.submit(
+						() -> shuffleClient.fetchSegmentFile(localDir, SUPERVISOR_TASK_ID, mockPartitionLocation())));
 			}
 
 			for (int i = 0; i < futures.size(); i++) {
@@ -167,22 +173,4 @@ public class HttpShuffleClientTest {
 		return new HttpShuffleClient(httpClient);
 	}
 
-	private PartitionLocation<Integer> mockPartitionLocation() {
-		PartitionLocation<Integer> res = Mockito.mock(PartitionLocation.class,
-				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor(HOST, PORT, false,
-						SUBTASK_ID, INTERVAL, PARTITION_ID));
-		Mockito.when(res.getBucketId()).thenAnswer(invo -> res.getSecondaryPartition());
-		return res;
-	}
-
-	private static class TestPartitionLocation extends PartitionLocation<Integer> {
-		private TestPartitionLocation() {
-			super(HOST, PORT, false, SUBTASK_ID, INTERVAL, PARTITION_ID);
-		}
-
-		@Override
-		int getBucketId() {
-			return getSecondaryPartition();
-		}
-	}
 }
