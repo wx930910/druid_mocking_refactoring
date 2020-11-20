@@ -76,10 +76,10 @@ public class CloseableIteratorTest {
 	@Test
 	public void testFlatMapClosedEarly() throws IOException {
 		final int numIterations = 8;
-		List<CloseTrackingCloseableIterator<Integer>> innerIterators = new ArrayList<>();
-		final CloseTrackingCloseableIterator<Integer> actual = new CloseTrackingCloseableIterator<>(
+		List<CloseableIterator<Integer>> innerIterators = new ArrayList<>();
+		final CloseableIterator<Integer> actual = mockCloseableIterator(
 				generateTestIterator(numIterations).flatMap(list -> {
-					CloseTrackingCloseableIterator<Integer> inner = new CloseTrackingCloseableIterator<>(
+					CloseableIterator<Integer> inner = mockCloseableIterator(
 							CloseableIterators.withEmptyBaggage(list.iterator()));
 					innerIterators.add(inner);
 					return inner;
@@ -100,9 +100,9 @@ public class CloseableIteratorTest {
 		Assert.assertEquals(4, innerIterators.size());
 		Assert.assertTrue(innerIterators.get(innerIterators.size() - 1).hasNext());
 		actual.close();
-		Assert.assertEquals(1, actual.closeCount);
-		for (CloseTrackingCloseableIterator iter : innerIterators) {
-			Assert.assertEquals(1, iter.closeCount);
+		Mockito.verify(actual, Mockito.times(1)).close();
+		for (CloseableIterator<Integer> iter : innerIterators) {
+			Mockito.verify(iter, Mockito.times(1)).close();
 		}
 	}
 
@@ -151,29 +151,4 @@ public class CloseableIteratorTest {
 		return it;
 	}
 
-	static class CloseTrackingCloseableIterator<T> implements CloseableIterator<T> {
-		CloseableIterator<T> inner;
-		int closeCount;
-
-		public CloseTrackingCloseableIterator(CloseableIterator<T> toTrack) {
-			this.inner = toTrack;
-			this.closeCount = 0;
-		}
-
-		@Override
-		public void close() throws IOException {
-			inner.close();
-			closeCount++;
-		}
-
-		@Override
-		public boolean hasNext() {
-			return inner.hasNext();
-		}
-
-		@Override
-		public T next() {
-			return inner.next();
-		}
-	}
 }
