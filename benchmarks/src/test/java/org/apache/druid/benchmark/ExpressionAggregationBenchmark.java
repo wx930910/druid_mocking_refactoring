@@ -19,8 +19,11 @@
 
 package org.apache.druid.benchmark;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
+import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+
 import org.apache.druid.common.config.NullHandling;
 import org.apache.druid.java.util.common.Intervals;
 import org.apache.druid.java.util.common.granularity.Granularities;
@@ -59,10 +62,8 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import java.nio.ByteBuffer;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Iterables;
 
 @State(Scope.Benchmark)
 @Fork(value = 1)
@@ -70,192 +71,142 @@ import java.util.function.Function;
 @Measurement(iterations = 30)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
-public class ExpressionAggregationBenchmark
-{
-  static {
-    NullHandling.initializeForTests();
-  }
+public class ExpressionAggregationBenchmark {
+	static {
+		NullHandling.initializeForTests();
+	}
 
-  @Param({"1000000"})
-  private int rowsPerSegment;
+	@Param({ "1000000" })
+	private int rowsPerSegment;
 
-  private QueryableIndex index;
-  private JavaScriptAggregatorFactory javaScriptAggregatorFactory;
-  private DoubleSumAggregatorFactory expressionAggregatorFactory;
-  private ByteBuffer aggregationBuffer = ByteBuffer.allocate(Double.BYTES);
-  private Closer closer;
+	private QueryableIndex index;
+	private JavaScriptAggregatorFactory javaScriptAggregatorFactory;
+	private DoubleSumAggregatorFactory expressionAggregatorFactory;
+	private ByteBuffer aggregationBuffer = ByteBuffer.allocate(Double.BYTES);
+	private Closer closer;
 
-  @Setup(Level.Trial)
-  public void setup()
-  {
-    this.closer = Closer.create();
+	@Setup(Level.Trial)
+	public void setup() {
+		this.closer = Closer.create();
 
-    final GeneratorSchemaInfo schemaInfo = new GeneratorSchemaInfo(
-        ImmutableList.of(
-            GeneratorColumnSchema.makeNormal("x", ValueType.FLOAT, false, 1, 0d, 0d, 10000d, false),
-            GeneratorColumnSchema.makeNormal("y", ValueType.FLOAT, false, 1, 0d, 0d, 10000d, false)
-        ),
-        ImmutableList.of(),
-        Intervals.of("2000/P1D"),
-        false
-    );
+		final GeneratorSchemaInfo schemaInfo = new GeneratorSchemaInfo(
+				ImmutableList.of(
+						GeneratorColumnSchema.makeNormal("x", ValueType.FLOAT, false, 1, 0d, 0d, 10000d, false),
+						GeneratorColumnSchema.makeNormal("y", ValueType.FLOAT, false, 1, 0d, 0d, 10000d, false)),
+				ImmutableList.of(), Intervals.of("2000/P1D"), false);
 
-    final DataSegment dataSegment = DataSegment.builder()
-                                               .dataSource("foo")
-                                               .interval(schemaInfo.getDataInterval())
-                                               .version("1")
-                                               .shardSpec(new LinearShardSpec(0))
-                                               .size(0)
-                                               .build();
+		final DataSegment dataSegment = DataSegment.builder().dataSource("foo").interval(schemaInfo.getDataInterval())
+				.version("1").shardSpec(new LinearShardSpec(0)).size(0).build();
 
-    final SegmentGenerator segmentGenerator = closer.register(new SegmentGenerator());
-    this.index = closer.register(
-        segmentGenerator.generate(dataSegment, schemaInfo, Granularities.NONE, rowsPerSegment)
-    );
-    this.javaScriptAggregatorFactory = new JavaScriptAggregatorFactory(
-        "name",
-        ImmutableList.of("x", "y"),
-        "function(current,x,y) { if (x > 0) { return current + x + 1 } else { return current + y + 1 } }",
-        "function() { return 0 }",
-        "function(a,b) { return a + b }",
-        JavaScriptConfig.getEnabledInstance()
-    );
-    this.expressionAggregatorFactory = new DoubleSumAggregatorFactory(
-        "name",
-        null,
-        "if(x>0,1.0+x,y+1)",
-        TestExprMacroTable.INSTANCE
-    );
-  }
+		final SegmentGenerator segmentGenerator = closer.register(new SegmentGenerator());
+		this.index = closer
+				.register(segmentGenerator.generate(dataSegment, schemaInfo, Granularities.NONE, rowsPerSegment));
+		this.javaScriptAggregatorFactory = new JavaScriptAggregatorFactory("name", ImmutableList.of("x", "y"),
+				"function(current,x,y) { if (x > 0) { return current + x + 1 } else { return current + y + 1 } }",
+				"function() { return 0 }", "function(a,b) { return a + b }", JavaScriptConfig.getEnabledInstance());
+		this.expressionAggregatorFactory = new DoubleSumAggregatorFactory("name", null, "if(x>0,1.0+x,y+1)",
+				TestExprMacroTable.INSTANCE);
+	}
 
-  @TearDown(Level.Trial)
-  public void tearDown() throws Exception
-  {
-    closer.close();
-  }
+	@TearDown(Level.Trial)
+	public void tearDown() throws Exception {
+		closer.close();
+	}
 
-  @Benchmark
-  public void queryUsingJavaScript(Blackhole blackhole)
-  {
-    final Double result = compute(javaScriptAggregatorFactory::factorizeBuffered);
-    blackhole.consume(result);
-  }
+	@Benchmark
+	public void queryUsingJavaScript(Blackhole blackhole) {
+		final Double result = compute(javaScriptAggregatorFactory::factorizeBuffered);
+		blackhole.consume(result);
+	}
 
-  @Benchmark
-  public void queryUsingExpression(Blackhole blackhole)
-  {
-    final Double result = compute(expressionAggregatorFactory::factorizeBuffered);
-    blackhole.consume(result);
-  }
+	@Benchmark
+	public void queryUsingExpression(Blackhole blackhole) {
+		final Double result = compute(expressionAggregatorFactory::factorizeBuffered);
+		blackhole.consume(result);
+	}
 
-  @Benchmark
-  public void queryUsingNative(Blackhole blackhole)
-  {
-    final Double result = compute(
-        columnSelectorFactory ->
-            new NativeBufferAggregator(
-                columnSelectorFactory.makeColumnValueSelector("x"),
-                columnSelectorFactory.makeColumnValueSelector("y")
-            )
-    );
-    blackhole.consume(result);
-  }
+	@Benchmark
+	public void queryUsingNative(Blackhole blackhole) {
+		final Double result = compute(
+				columnSelectorFactory -> new NativeBufferAggregator(columnSelectorFactory.makeColumnValueSelector("x"),
+						columnSelectorFactory.makeColumnValueSelector("y")));
+		blackhole.consume(result);
+	}
 
-  private double compute(final Function<ColumnSelectorFactory, BufferAggregator> aggregatorFactory)
-  {
-    final QueryableIndexStorageAdapter adapter = new QueryableIndexStorageAdapter(index);
+	private double compute(final Function<ColumnSelectorFactory, BufferAggregator> aggregatorFactory) {
+		final QueryableIndexStorageAdapter adapter = new QueryableIndexStorageAdapter(index);
 
-    final Sequence<Cursor> cursors = adapter.makeCursors(
-        null,
-        index.getDataInterval(),
-        VirtualColumns.EMPTY,
-        Granularities.ALL,
-        false,
-        null
-    );
+		final Sequence<Cursor> cursors = adapter.makeCursors(null, index.getDataInterval(), VirtualColumns.EMPTY,
+				Granularities.ALL, false, null);
 
-    final List<Double> results = cursors
-        .map(cursor -> {
-          final BufferAggregator bufferAggregator = aggregatorFactory.apply(cursor.getColumnSelectorFactory());
-          bufferAggregator.init(aggregationBuffer, 0);
+		final List<Double> results = cursors.map(cursor -> {
+			final BufferAggregator bufferAggregator = aggregatorFactory.apply(cursor.getColumnSelectorFactory());
+			bufferAggregator.init(aggregationBuffer, 0);
 
-          while (!cursor.isDone()) {
-            bufferAggregator.aggregate(aggregationBuffer, 0);
-            cursor.advance();
-          }
+			while (!cursor.isDone()) {
+				bufferAggregator.aggregate(aggregationBuffer, 0);
+				cursor.advance();
+			}
 
-          final Double dbl = (Double) bufferAggregator.get(aggregationBuffer, 0);
-          bufferAggregator.close();
-          return dbl;
-        })
-        .toList();
+			final Double dbl = (Double) bufferAggregator.get(aggregationBuffer, 0);
+			bufferAggregator.close();
+			return dbl;
+		}).toList();
 
-    return Iterables.getOnlyElement(results);
-  }
+		return Iterables.getOnlyElement(results);
+	}
 
-  private static class NativeBufferAggregator implements BufferAggregator
-  {
-    private final BaseFloatColumnValueSelector xSelector;
-    private final BaseFloatColumnValueSelector ySelector;
+	private static class NativeBufferAggregator implements BufferAggregator {
+		private final BaseFloatColumnValueSelector xSelector;
+		private final BaseFloatColumnValueSelector ySelector;
 
-    public NativeBufferAggregator(
-        final BaseFloatColumnValueSelector xSelector,
-        final BaseFloatColumnValueSelector ySelector
-    )
-    {
-      this.xSelector = xSelector;
-      this.ySelector = ySelector;
-    }
+		public NativeBufferAggregator(final BaseFloatColumnValueSelector xSelector,
+				final BaseFloatColumnValueSelector ySelector) {
+			this.xSelector = xSelector;
+			this.ySelector = ySelector;
+		}
 
-    @Override
-    public void init(final ByteBuffer buf, final int position)
-    {
-      buf.putDouble(0, 0d);
-    }
+		@Override
+		public void init(final ByteBuffer buf, final int position) {
+			buf.putDouble(0, 0d);
+		}
 
-    @Override
-    public void aggregate(final ByteBuffer buf, final int position)
-    {
-      final float x = xSelector.getFloat();
-      final double n = x > 0 ? x + 1 : ySelector.getFloat() + 1;
-      buf.putDouble(0, buf.getDouble(position) + n);
-    }
+		@Override
+		public void aggregate(final ByteBuffer buf, final int position) {
+			final float x = xSelector.getFloat();
+			final double n = x > 0 ? x + 1 : ySelector.getFloat() + 1;
+			buf.putDouble(0, buf.getDouble(position) + n);
+		}
 
-    @Override
-    public Object get(final ByteBuffer buf, final int position)
-    {
-      return buf.getDouble(position);
-    }
+		@Override
+		public Object get(final ByteBuffer buf, final int position) {
+			return buf.getDouble(position);
+		}
 
-    @Override
-    public float getFloat(final ByteBuffer buf, final int position)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public float getFloat(final ByteBuffer buf, final int position) {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public long getLong(final ByteBuffer buf, final int position)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public long getLong(final ByteBuffer buf, final int position) {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public double getDouble(ByteBuffer buf, int position)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public double getDouble(ByteBuffer buf, int position) {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public void close()
-    {
-      // nothing to close
-    }
+		@Override
+		public void close() {
+			// nothing to close
+		}
 
-    @Override
-    public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-    {
-      inspector.visit("xSelector", xSelector);
-      inspector.visit("ySelector", ySelector);
-    }
-  }
+		@Override
+		public void inspectRuntimeShape(RuntimeShapeInspector inspector) {
+			inspector.visit("xSelector", xSelector);
+			inspector.visit("ySelector", ySelector);
+		}
+	}
 }

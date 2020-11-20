@@ -19,20 +19,17 @@
 
 package org.apache.druid.query.groupby.epinephelinae;
 
-public class GrouperTestUtil
-{
-  private GrouperTestUtil()
-  {
-    // No instantiation
-  }
+public class GrouperTestUtil {
+	private GrouperTestUtil() {
+		// No instantiation
+	}
 
-  public static Grouper.KeySerde<Integer> intKeySerde()
-  {
-    return IntKeySerde.INSTANCE;
-  }
+	public static Grouper.KeySerde<Integer> intKeySerde() {
+		return IntKeySerde.INSTANCE;
+	}
 
-  public static TestColumnSelectorFactory newColumnSelectorFactory()
-  {
-    return new TestColumnSelectorFactory();
-  }
+	public static TestColumnSelectorFactory newColumnSelectorFactory() {
+		return new TestColumnSelectorFactory();
+	}
+
 }

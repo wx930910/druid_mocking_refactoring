@@ -19,9 +19,11 @@
 
 package org.apache.druid.indexing.common;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Optional;
-import com.google.common.util.concurrent.Futures;
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.nio.charset.StandardCharsets;
+import java.util.function.Function;
+
 import org.apache.druid.indexer.TaskLocation;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.jackson.DefaultObjectMapper;
@@ -38,117 +40,87 @@ import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.mockito.Mockito;
 
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.nio.charset.StandardCharsets;
-import java.util.function.Function;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Optional;
+import com.google.common.util.concurrent.Futures;
 
-public class IndexTaskClientTest
-{
-  @Rule
-  public ExpectedException expectedException = ExpectedException.none();
+public class IndexTaskClientTest {
+	@Rule
+	public ExpectedException expectedException = ExpectedException.none();
 
-  private final ObjectMapper objectMapper = new DefaultObjectMapper();
-  private final int numRetries = 2;
+	private final ObjectMapper objectMapper = new DefaultObjectMapper();
+	private final int numRetries = 2;
 
-  @Test
-  public void failOnMalformedURLException() throws IOException
-  {
-    try (IndexTaskClient indexTaskClient = buildIndexTaskClient(
-        EasyMock.createNiceMock(HttpClient.class),
-        id -> TaskLocation.create(id, -2, -2)
-    )) {
-      expectedException.expect(MalformedURLException.class);
-      expectedException.expectMessage("Invalid port number :-2");
+	@Test
+	public void failOnMalformedURLException() throws IOException {
+		try (IndexTaskClient indexTaskClient = buildIndexTaskClient(EasyMock.createNiceMock(HttpClient.class),
+				id -> TaskLocation.create(id, -2, -2))) {
+			expectedException.expect(MalformedURLException.class);
+			expectedException.expectMessage("Invalid port number :-2");
 
-      indexTaskClient.submitRequestWithEmptyContent(
-          "taskId",
-          HttpMethod.GET,
-          "test",
-          null,
-          true
-      );
-    }
-  }
+			indexTaskClient.submitRequestWithEmptyContent("taskId", HttpMethod.GET, "test", null, true);
+		}
+	}
 
-  @Test
-  public void retryOnChannelException() throws IOException
-  {
-    final HttpClient httpClient = EasyMock.createNiceMock(HttpClient.class);
-    EasyMock.expect(httpClient.go(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject()))
-            .andReturn(Futures.immediateFailedFuture(new ChannelException("IndexTaskClientTest")))
-            .times(2);
-    EasyMock.expect(httpClient.go(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject()))
-            .andReturn(
-                Futures.immediateFuture(
-                    new StringFullResponseHolder(
-                        HttpResponseStatus.OK,
-                        new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK),
-                        StandardCharsets.UTF_8
-                    )
-                )
-            )
-            .once();
-    EasyMock.replay(httpClient);
-    try (IndexTaskClient indexTaskClient = buildIndexTaskClient(httpClient, id -> TaskLocation.create(id, 8000, -1))) {
-      final StringFullResponseHolder response = indexTaskClient.submitRequestWithEmptyContent(
-          "taskId",
-          HttpMethod.GET,
-          "test",
-          null,
-          true
-      );
-      Assert.assertEquals(HttpResponseStatus.OK, response.getStatus());
-    }
-  } 
+	@Test
+	public void retryOnChannelException() throws IOException {
+		final HttpClient httpClient = EasyMock.createNiceMock(HttpClient.class);
+		EasyMock.expect(httpClient.go(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject()))
+				.andReturn(Futures.immediateFailedFuture(new ChannelException("IndexTaskClientTest"))).times(2);
+		EasyMock.expect(httpClient.go(EasyMock.anyObject(), EasyMock.anyObject(), EasyMock.anyObject()))
+				.andReturn(Futures.immediateFuture(new StringFullResponseHolder(HttpResponseStatus.OK,
+						new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK), StandardCharsets.UTF_8)))
+				.once();
+		EasyMock.replay(httpClient);
+		try (IndexTaskClient indexTaskClient = buildIndexTaskClient(httpClient,
+				id -> TaskLocation.create(id, 8000, -1))) {
+			final StringFullResponseHolder response = indexTaskClient.submitRequestWithEmptyContent("taskId",
+					HttpMethod.GET, "test", null, true);
+			Assert.assertEquals(HttpResponseStatus.OK, response.getStatus());
+		}
+	}
 
-  private IndexTaskClient buildIndexTaskClient(HttpClient httpClient, Function<String, TaskLocation> taskLocationProvider)
-  {
-    final TaskInfoProvider taskInfoProvider = new TaskInfoProvider()
-    {
-      @Override
-      public TaskLocation getTaskLocation(String id)
-      {
-        return taskLocationProvider.apply(id);
-      }
+	private IndexTaskClient buildIndexTaskClient(HttpClient httpClient,
+			Function<String, TaskLocation> taskLocationProvider) {
+		final TaskInfoProvider taskInfoProvider = new TaskInfoProvider() {
+			@Override
+			public TaskLocation getTaskLocation(String id) {
+				return taskLocationProvider.apply(id);
+			}
 
-      @Override
-      public Optional<TaskStatus> getTaskStatus(String id)
-      {
-        return Optional.of(TaskStatus.running(id));
-      }
-    };
-    return new TestIndexTaskClient(
-        httpClient,
-        objectMapper,
-        taskInfoProvider,
-        new Duration(1000),
-        "indexTaskClientTest",
-        1,
-        numRetries
-    );
-  }
+			@Override
+			public Optional<TaskStatus> getTaskStatus(String id) {
+				return Optional.of(TaskStatus.running(id));
+			}
+		};
+		return mockIndexTaskClient(httpClient, objectMapper, taskInfoProvider, new Duration(1000),
+				"indexTaskClientTest", 1, numRetries);
+	}
 
-  private static class TestIndexTaskClient extends IndexTaskClient
-  {
-    private TestIndexTaskClient(
-        HttpClient httpClient,
-        ObjectMapper objectMapper,
-        TaskInfoProvider taskInfoProvider,
-        Duration httpTimeout,
-        String callerId,
-        int numThreads,
-        long numRetries
-    )
-    {
-      super(httpClient, objectMapper, taskInfoProvider, httpTimeout, callerId, numThreads, numRetries);
-    }
+	private static IndexTaskClient mockIndexTaskClient(HttpClient httpClient, ObjectMapper objectMapper,
+			TaskInfoProvider taskInfoProvider, Duration httpTimeout, String callerId, int numThreads, long numRetries) {
+		IndexTaskClient res = Mockito.mock(IndexTaskClient.class,
+				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor(httpClient,
+						objectMapper, taskInfoProvider, httpTimeout, callerId, numThreads, numRetries));
+		try {
+			Mockito.doNothing().when(res).checkConnection(Mockito.anyString(), Mockito.anyInt());
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+		return res;
+	}
 
-    @Override
-    protected void checkConnection(String host, int port)
-    {
-      // do nothing
-    }
-  }
+	private static class TestIndexTaskClient extends IndexTaskClient {
+		private TestIndexTaskClient(HttpClient httpClient, ObjectMapper objectMapper, TaskInfoProvider taskInfoProvider,
+				Duration httpTimeout, String callerId, int numThreads, long numRetries) {
+			super(httpClient, objectMapper, taskInfoProvider, httpTimeout, callerId, numThreads, numRetries);
+		}
+
+		@Override
+		protected void checkConnection(String host, int port) {
+			// do nothing
+		}
+	}
 }

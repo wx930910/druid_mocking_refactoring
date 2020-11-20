@@ -19,12 +19,15 @@
 
 package org.apache.druid.client;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Maps;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
+import java.io.ByteArrayInputStream;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.apache.druid.discovery.DataNodeService;
 import org.apache.druid.discovery.DiscoveryDruidNode;
 import org.apache.druid.discovery.DruidNodeDiscovery;
@@ -55,294 +58,228 @@ import org.jboss.netty.handler.codec.http.HttpVersion;
 import org.joda.time.Duration;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.Mockito;
 
-import java.io.ByteArrayInputStream;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.atomic.AtomicInteger;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
+import com.google.common.util.concurrent.Futures;
+import com.google.common.util.concurrent.ListenableFuture;
 
 /**
  *
  */
-public class HttpServerInventoryViewTest
-{
-  @Test(timeout = 60_000L)
-  public void testSimple() throws Exception
-  {
-    ObjectMapper jsonMapper = TestHelper.makeJsonMapper();
+public class HttpServerInventoryViewTest {
+	@Test(timeout = 60_000L)
+	public void testSimple() throws Exception {
+		ObjectMapper jsonMapper = TestHelper.makeJsonMapper();
 
-    TestDruidNodeDiscovery druidNodeDiscovery = new TestDruidNodeDiscovery();
-    DruidNodeDiscoveryProvider druidNodeDiscoveryProvider = EasyMock.createMock(DruidNodeDiscoveryProvider.class);
-    EasyMock.expect(druidNodeDiscoveryProvider.getForService(DataNodeService.DISCOVERY_SERVICE_KEY))
-            .andReturn(druidNodeDiscovery);
-    EasyMock.replay(druidNodeDiscoveryProvider);
+		// TestDruidNodeDiscovery druidNodeDiscovery = new
+		// TestDruidNodeDiscovery();
+		// DruidNodeDiscovery druidNodeDiscovery = mockDruidNodeDiscovery();
+		org.apache.druid.discovery.DruidNodeDiscovery.Listener[] listener = new org.apache.druid.discovery.DruidNodeDiscovery.Listener[1];
+		DruidNodeDiscovery druidNodeDiscovery = Mockito.mock(DruidNodeDiscovery.class);
+		Mockito.when(druidNodeDiscovery.getAllNodes()).thenThrow(new UnsupportedOperationException("Not Implemented."));
+		Mockito.doAnswer(invo -> {
+			org.apache.druid.discovery.DruidNodeDiscovery.Listener l = invo.getArgument(0);
+			l.nodesAdded(ImmutableList.of());
+			l.nodeViewInitialized();
+			listener[0] = l;
+			return null;
+		}).when(druidNodeDiscovery).registerListener(Mockito.any());
 
-    final DataSegment segment1 = new DataSegment(
-        "test1", Intervals.of("2014/2015"), "v1",
-        null, null, null, null, 0, 0
-    );
+		DruidNodeDiscoveryProvider druidNodeDiscoveryProvider = EasyMock.createMock(DruidNodeDiscoveryProvider.class);
+		EasyMock.expect(druidNodeDiscoveryProvider.getForService(DataNodeService.DISCOVERY_SERVICE_KEY))
+				.andReturn(druidNodeDiscovery);
+		EasyMock.replay(druidNodeDiscoveryProvider);
 
-    final DataSegment segment2 = new DataSegment(
-        "test2", Intervals.of("2014/2015"), "v1",
-        null, null, null, null, 0, 0
-    );
+		final DataSegment segment1 = new DataSegment("test1", Intervals.of("2014/2015"), "v1", null, null, null, null,
+				0, 0);
 
-    final DataSegment segment3 = new DataSegment(
-        "test3", Intervals.of("2014/2015"), "v1",
-        null, null, null, null, 0, 0
-    );
+		final DataSegment segment2 = new DataSegment("test2", Intervals.of("2014/2015"), "v1", null, null, null, null,
+				0, 0);
 
-    final DataSegment segment4 = new DataSegment(
-        "test4", Intervals.of("2014/2015"), "v1",
-        null, null, null, null, 0, 0
-    );
+		final DataSegment segment3 = new DataSegment("test3", Intervals.of("2014/2015"), "v1", null, null, null, null,
+				0, 0);
 
-    final DataSegment segment5 = new DataSegment(
-        "non-loading-datasource", Intervals.of("2014/2015"), "v1",
-        null, null, null, null, 0, 0
-    );
+		final DataSegment segment4 = new DataSegment("test4", Intervals.of("2014/2015"), "v1", null, null, null, null,
+				0, 0);
 
-    TestHttpClient httpClient = new TestHttpClient(
-        ImmutableList.of(
-            Futures.immediateFuture(
-                new ByteArrayInputStream(
-                    jsonMapper.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF).writeValueAsBytes(
-                        new ChangeRequestsSnapshot(
-                            false,
-                            null,
-                            ChangeRequestHistory.Counter.ZERO,
-                            ImmutableList.of(
-                                new SegmentChangeRequestLoad(segment1)
-                            )
-                        )
-                    )
-                )
-            ),
-            Futures.immediateFuture(
-                new ByteArrayInputStream(
-                    jsonMapper.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF).writeValueAsBytes(
-                        new ChangeRequestsSnapshot(
-                            false,
-                            null,
-                            ChangeRequestHistory.Counter.ZERO,
-                            ImmutableList.of(
-                                new SegmentChangeRequestDrop(segment1),
-                                new SegmentChangeRequestLoad(segment2),
-                                new SegmentChangeRequestLoad(segment3)
-                            )
-                        )
-                    )
-                )
-            ),
-            Futures.immediateFuture(
-                new ByteArrayInputStream(
-                    jsonMapper.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF).writeValueAsBytes(
-                        new ChangeRequestsSnapshot(
-                            true,
-                            "force reset counter",
-                            ChangeRequestHistory.Counter.ZERO,
-                            ImmutableList.of()
-                        )
-                    )
-                )
-            ),
-            Futures.immediateFuture(
-                new ByteArrayInputStream(
-                    jsonMapper.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF).writeValueAsBytes(
-                        new ChangeRequestsSnapshot(
-                            false,
-                            null,
-                            ChangeRequestHistory.Counter.ZERO,
-                            ImmutableList.of(
-                                new SegmentChangeRequestLoad(segment3),
-                                new SegmentChangeRequestLoad(segment4),
-                                new SegmentChangeRequestLoad(segment5)
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    );
+		final DataSegment segment5 = new DataSegment("non-loading-datasource", Intervals.of("2014/2015"), "v1", null,
+				null, null, null, 0, 0);
+		TestHttpClient httpClient = new TestHttpClient(ImmutableList.of(
+				Futures.immediateFuture(new ByteArrayInputStream(jsonMapper
+						.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF)
+						.writeValueAsBytes(new ChangeRequestsSnapshot(false, null, ChangeRequestHistory.Counter.ZERO,
+								ImmutableList.of(new SegmentChangeRequestLoad(segment1)))))),
+				Futures.immediateFuture(new ByteArrayInputStream(jsonMapper
+						.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF)
+						.writeValueAsBytes(new ChangeRequestsSnapshot(false, null, ChangeRequestHistory.Counter.ZERO,
+								ImmutableList.of(new SegmentChangeRequestDrop(segment1),
+										new SegmentChangeRequestLoad(segment2),
+										new SegmentChangeRequestLoad(segment3)))))),
+				Futures.immediateFuture(
+						new ByteArrayInputStream(
+								jsonMapper.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF)
+										.writeValueAsBytes(new ChangeRequestsSnapshot(true, "force reset counter",
+												ChangeRequestHistory.Counter.ZERO, ImmutableList.of())))),
+				Futures.immediateFuture(new ByteArrayInputStream(jsonMapper
+						.writerWithType(HttpServerInventoryView.SEGMENT_LIST_RESP_TYPE_REF)
+						.writeValueAsBytes(new ChangeRequestsSnapshot(false, null, ChangeRequestHistory.Counter.ZERO,
+								ImmutableList.of(new SegmentChangeRequestLoad(segment3),
+										new SegmentChangeRequestLoad(segment4),
+										new SegmentChangeRequestLoad(segment5))))))));
 
-    DiscoveryDruidNode druidNode = new DiscoveryDruidNode(
-        new DruidNode("service", "host", false, 8080, null, true, false),
-        NodeRole.HISTORICAL,
-        ImmutableMap.of(
-            DataNodeService.DISCOVERY_SERVICE_KEY, new DataNodeService("tier", 1000, ServerType.HISTORICAL, 0)
-        )
-    );
+		DiscoveryDruidNode druidNode = new DiscoveryDruidNode(
+				new DruidNode("service", "host", false, 8080, null, true, false), NodeRole.HISTORICAL,
+				ImmutableMap.of(DataNodeService.DISCOVERY_SERVICE_KEY,
+						new DataNodeService("tier", 1000, ServerType.HISTORICAL, 0)));
 
-    HttpServerInventoryView httpServerInventoryView = new HttpServerInventoryView(
-        jsonMapper,
-        httpClient,
-        druidNodeDiscoveryProvider,
-        (pair) -> !pair.rhs.getDataSource().equals("non-loading-datasource"),
-        new HttpServerInventoryViewConfig(null, null, null)
-    );
+		HttpServerInventoryView httpServerInventoryView = new HttpServerInventoryView(jsonMapper, httpClient,
+				druidNodeDiscoveryProvider, (pair) -> !pair.rhs.getDataSource().equals("non-loading-datasource"),
+				new HttpServerInventoryViewConfig(null, null, null));
 
-    CountDownLatch initializeCallback1 = new CountDownLatch(1);
+		CountDownLatch initializeCallback1 = new CountDownLatch(1);
 
-    Map<SegmentId, CountDownLatch> segmentAddLathces = ImmutableMap.of(
-        segment1.getId(), new CountDownLatch(1),
-        segment2.getId(), new CountDownLatch(1),
-        segment3.getId(), new CountDownLatch(1),
-        segment4.getId(), new CountDownLatch(1)
-    );
+		Map<SegmentId, CountDownLatch> segmentAddLathces = ImmutableMap.of(segment1.getId(), new CountDownLatch(1),
+				segment2.getId(), new CountDownLatch(1), segment3.getId(), new CountDownLatch(1), segment4.getId(),
+				new CountDownLatch(1));
 
-    Map<SegmentId, CountDownLatch> segmentDropLatches = ImmutableMap.of(
-        segment1.getId(), new CountDownLatch(1),
-        segment2.getId(), new CountDownLatch(1)
-    );
+		Map<SegmentId, CountDownLatch> segmentDropLatches = ImmutableMap.of(segment1.getId(), new CountDownLatch(1),
+				segment2.getId(), new CountDownLatch(1));
 
-    httpServerInventoryView.registerSegmentCallback(
-        Execs.directExecutor(),
-        new ServerView.SegmentCallback()
-        {
-          @Override
-          public ServerView.CallbackAction segmentAdded(DruidServerMetadata server, DataSegment segment)
-          {
-            segmentAddLathces.get(segment.getId()).countDown();
-            return ServerView.CallbackAction.CONTINUE;
-          }
+		httpServerInventoryView.registerSegmentCallback(Execs.directExecutor(), new ServerView.SegmentCallback() {
+			@Override
+			public ServerView.CallbackAction segmentAdded(DruidServerMetadata server, DataSegment segment) {
+				segmentAddLathces.get(segment.getId()).countDown();
+				return ServerView.CallbackAction.CONTINUE;
+			}
 
-          @Override
-          public ServerView.CallbackAction segmentRemoved(DruidServerMetadata server, DataSegment segment)
-          {
-            segmentDropLatches.get(segment.getId()).countDown();
-            return ServerView.CallbackAction.CONTINUE;
-          }
+			@Override
+			public ServerView.CallbackAction segmentRemoved(DruidServerMetadata server, DataSegment segment) {
+				segmentDropLatches.get(segment.getId()).countDown();
+				return ServerView.CallbackAction.CONTINUE;
+			}
 
-          @Override
-          public ServerView.CallbackAction segmentViewInitialized()
-          {
-            initializeCallback1.countDown();
-            return ServerView.CallbackAction.CONTINUE;
-          }
-        }
-    );
+			@Override
+			public ServerView.CallbackAction segmentViewInitialized() {
+				initializeCallback1.countDown();
+				return ServerView.CallbackAction.CONTINUE;
+			}
+		});
 
-    final CountDownLatch serverRemovedCalled = new CountDownLatch(1);
-    httpServerInventoryView.registerServerRemovedCallback(
-        Execs.directExecutor(),
-        new ServerView.ServerRemovedCallback()
-        {
-          @Override
-          public ServerView.CallbackAction serverRemoved(DruidServer server)
-          {
-            if (server.getName().equals("host:8080")) {
-              serverRemovedCalled.countDown();
-              return ServerView.CallbackAction.CONTINUE;
-            } else {
-              throw new RE("Unknown server [%s]", server.getName());
-            }
-          }
-        }
-    );
+		final CountDownLatch serverRemovedCalled = new CountDownLatch(1);
+		httpServerInventoryView.registerServerRemovedCallback(Execs.directExecutor(),
+				new ServerView.ServerRemovedCallback() {
+					@Override
+					public ServerView.CallbackAction serverRemoved(DruidServer server) {
+						if (server.getName().equals("host:8080")) {
+							serverRemovedCalled.countDown();
+							return ServerView.CallbackAction.CONTINUE;
+						} else {
+							throw new RE("Unknown server [%s]", server.getName());
+						}
+					}
+				});
 
-    httpServerInventoryView.start();
+		httpServerInventoryView.start();
 
-    druidNodeDiscovery.listener.nodesAdded(ImmutableList.of(druidNode));
+		listener[0].nodesAdded(ImmutableList.of(druidNode));
 
-    initializeCallback1.await();
-    segmentAddLathces.get(segment1.getId()).await();
-    segmentDropLatches.get(segment1.getId()).await();
-    segmentAddLathces.get(segment2.getId()).await();
-    segmentAddLathces.get(segment3.getId()).await();
-    segmentAddLathces.get(segment4.getId()).await();
-    segmentDropLatches.get(segment2.getId()).await();
+		initializeCallback1.await();
+		segmentAddLathces.get(segment1.getId()).await();
+		segmentDropLatches.get(segment1.getId()).await();
+		segmentAddLathces.get(segment2.getId()).await();
+		segmentAddLathces.get(segment3.getId()).await();
+		segmentAddLathces.get(segment4.getId()).await();
+		segmentDropLatches.get(segment2.getId()).await();
 
-    DruidServer druidServer = httpServerInventoryView.getInventoryValue("host:8080");
-    Assert.assertEquals(
-        ImmutableMap.of(segment3.getId(), segment3, segment4.getId(), segment4),
-        Maps.uniqueIndex(druidServer.iterateAllSegments(), DataSegment::getId)
-    );
+		DruidServer druidServer = httpServerInventoryView.getInventoryValue("host:8080");
+		Assert.assertEquals(ImmutableMap.of(segment3.getId(), segment3, segment4.getId(), segment4),
+				Maps.uniqueIndex(druidServer.iterateAllSegments(), DataSegment::getId));
 
-    druidNodeDiscovery.listener.nodesRemoved(ImmutableList.of(druidNode));
+		listener[0].nodesRemoved(ImmutableList.of(druidNode));
 
-    serverRemovedCalled.await();
-    Assert.assertNull(httpServerInventoryView.getInventoryValue("host:8080"));
+		serverRemovedCalled.await();
+		Assert.assertNull(httpServerInventoryView.getInventoryValue("host:8080"));
 
-    EasyMock.verify(druidNodeDiscoveryProvider);
+		EasyMock.verify(druidNodeDiscoveryProvider);
 
-    httpServerInventoryView.stop();
-  }
+		httpServerInventoryView.stop();
+	}
 
-  private static class TestDruidNodeDiscovery implements DruidNodeDiscovery
-  {
-    Listener listener;
+	private DruidNodeDiscovery mockDruidNodeDiscovery() {
+		org.apache.druid.discovery.DruidNodeDiscovery.Listener[] listener = new org.apache.druid.discovery.DruidNodeDiscovery.Listener[1];
+		DruidNodeDiscovery res = Mockito.mock(DruidNodeDiscovery.class);
+		Mockito.when(res.getAllNodes()).thenThrow(new UnsupportedOperationException("Not Implemented."));
+		Mockito.doAnswer(invo -> {
+			org.apache.druid.discovery.DruidNodeDiscovery.Listener l = invo.getArgument(0);
+			l.nodesAdded(ImmutableList.of());
+			l.nodeViewInitialized();
+			listener[0] = l;
+			return null;
+		}).when(res).registerListener(Mockito.any());
+		return res;
+	}
 
-    @Override
-    public Collection<DiscoveryDruidNode> getAllNodes()
-    {
-      throw new UnsupportedOperationException("Not Implemented.");
-    }
+	private static class TestDruidNodeDiscovery implements DruidNodeDiscovery {
+		Listener listener;
 
-    @Override
-    public void registerListener(Listener listener)
-    {
-      listener.nodesAdded(ImmutableList.of());
-      listener.nodeViewInitialized();
-      this.listener = listener;
-    }
-  }
+		@Override
+		public Collection<DiscoveryDruidNode> getAllNodes() {
+			throw new UnsupportedOperationException("Not Implemented.");
+		}
 
-  private static class TestHttpClient implements HttpClient
-  {
-    BlockingQueue<ListenableFuture> results;
-    AtomicInteger requestNum = new AtomicInteger(0);
+		@Override
+		public void registerListener(Listener listener) {
+			listener.nodesAdded(ImmutableList.of());
+			listener.nodeViewInitialized();
+			this.listener = listener;
+		}
+	}
 
-    TestHttpClient(List<ListenableFuture> resultsList)
-    {
-      results = new LinkedBlockingQueue<>();
-      results.addAll(resultsList);
-    }
+	private static class TestHttpClient implements HttpClient {
+		BlockingQueue<ListenableFuture> results;
+		AtomicInteger requestNum = new AtomicInteger(0);
 
-    @Override
-    public <Intermediate, Final> ListenableFuture<Final> go(
-        Request request,
-        HttpResponseHandler<Intermediate, Final> httpResponseHandler
-    )
-    {
-      throw new UnsupportedOperationException("Not Implemented.");
-    }
+		TestHttpClient(List<ListenableFuture> resultsList) {
+			results = new LinkedBlockingQueue<>();
+			results.addAll(resultsList);
+		}
 
-    @Override
-    public <Intermediate, Final> ListenableFuture<Final> go(
-        Request request,
-        HttpResponseHandler<Intermediate, Final> httpResponseHandler,
-        Duration duration
-    )
-    {
-      if (requestNum.getAndIncrement() == 0) {
-        //fail first request immediately
-        throw new RuntimeException("simulating couldn't send request to server for some reason.");
-      }
+		@Override
+		public <Intermediate, Final> ListenableFuture<Final> go(Request request,
+				HttpResponseHandler<Intermediate, Final> httpResponseHandler) {
+			throw new UnsupportedOperationException("Not Implemented.");
+		}
 
-      if (requestNum.get() == 2) {
-        //fail scenario where request is sent to server but we got an unexpected response.
-        HttpResponse httpResponse = new DefaultHttpResponse(
-            HttpVersion.HTTP_1_1,
-            HttpResponseStatus.INTERNAL_SERVER_ERROR
-        );
-        httpResponse.setContent(ChannelBuffers.buffer(0));
-        httpResponseHandler.handleResponse(httpResponse, null);
-        return Futures.immediateFailedFuture(new RuntimeException("server error"));
-      }
+		@Override
+		public <Intermediate, Final> ListenableFuture<Final> go(Request request,
+				HttpResponseHandler<Intermediate, Final> httpResponseHandler, Duration duration) {
+			if (requestNum.getAndIncrement() == 0) {
+				// fail first request immediately
+				throw new RuntimeException("simulating couldn't send request to server for some reason.");
+			}
 
-      HttpResponse httpResponse = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
-      httpResponse.setContent(ChannelBuffers.buffer(0));
-      httpResponseHandler.handleResponse(httpResponse, null);
-      try {
-        return results.take();
-      }
-      catch (InterruptedException ex) {
-        throw new RE(ex, "Interrupted.");
-      }
-    }
-  }
+			if (requestNum.get() == 2) {
+				// fail scenario where request is sent to server but we got an
+				// unexpected response.
+				HttpResponse httpResponse = new DefaultHttpResponse(HttpVersion.HTTP_1_1,
+						HttpResponseStatus.INTERNAL_SERVER_ERROR);
+				httpResponse.setContent(ChannelBuffers.buffer(0));
+				httpResponseHandler.handleResponse(httpResponse, null);
+				return Futures.immediateFailedFuture(new RuntimeException("server error"));
+			}
+
+			HttpResponse httpResponse = new DefaultHttpResponse(HttpVersion.HTTP_1_1, HttpResponseStatus.OK);
+			httpResponse.setContent(ChannelBuffers.buffer(0));
+			httpResponseHandler.handleResponse(httpResponse, null);
+			try {
+				return results.take();
+			} catch (InterruptedException ex) {
+				throw new RE(ex, "Interrupted.");
+			}
+		}
+	}
 }

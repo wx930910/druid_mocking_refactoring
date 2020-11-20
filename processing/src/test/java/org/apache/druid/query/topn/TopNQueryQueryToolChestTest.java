@@ -19,9 +19,13 @@
 
 package org.apache.druid.query.topn;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.druid.collections.CloseableStupidPool;
 import org.apache.druid.collections.SerializablePair;
 import org.apache.druid.common.config.NullHandling;
@@ -68,585 +72,342 @@ import org.apache.druid.timeline.SegmentId;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.mockito.Mockito;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
-public class TopNQueryQueryToolChestTest extends InitializedNullHandlingTest
-{
+public class TopNQueryQueryToolChestTest extends InitializedNullHandlingTest {
 
-  private static final SegmentId SEGMENT_ID = SegmentId.dummy("testSegment");
+	private static final SegmentId SEGMENT_ID = SegmentId.dummy("testSegment");
 
-  @BeforeClass
-  public static void setUpClass()
-  {
-    NullHandling.initializeForTests();
-  }
+	@BeforeClass
+	public static void setUpClass() {
+		NullHandling.initializeForTests();
+	}
 
-  @Test
-  public void testCacheStrategy() throws Exception
-  {
-    doTestCacheStrategy(ValueType.STRING, "val1");
-    doTestCacheStrategy(ValueType.FLOAT, 2.1f);
-    doTestCacheStrategy(ValueType.DOUBLE, 2.1d);
-    doTestCacheStrategy(ValueType.LONG, 2L);
-  }
+	@Test
+	public void testCacheStrategy() throws Exception {
+		doTestCacheStrategy(ValueType.STRING, "val1");
+		doTestCacheStrategy(ValueType.FLOAT, 2.1f);
+		doTestCacheStrategy(ValueType.DOUBLE, 2.1d);
+		doTestCacheStrategy(ValueType.LONG, 2L);
+	}
 
-  @Test
-  public void testCacheStrategyOrderByPostAggs() throws Exception
-  {
-    doTestCacheStrategyOrderByPost(ValueType.STRING, "val1");
-    doTestCacheStrategyOrderByPost(ValueType.FLOAT, 2.1f);
-    doTestCacheStrategyOrderByPost(ValueType.DOUBLE, 2.1d);
-    doTestCacheStrategyOrderByPost(ValueType.LONG, 2L);
-  }
+	@Test
+	public void testCacheStrategyOrderByPostAggs() throws Exception {
+		doTestCacheStrategyOrderByPost(ValueType.STRING, "val1");
+		doTestCacheStrategyOrderByPost(ValueType.FLOAT, 2.1f);
+		doTestCacheStrategyOrderByPost(ValueType.DOUBLE, 2.1d);
+		doTestCacheStrategyOrderByPost(ValueType.LONG, 2L);
+	}
 
-  @Test
-  public void testComputeCacheKeyWithDifferentPostAgg()
-  {
-    final TopNQuery query1 = new TopNQuery(
-        new TableDataSource("dummy"),
-        VirtualColumns.EMPTY,
-        new DefaultDimensionSpec("test", "test"),
-        new NumericTopNMetricSpec("post"),
-        3,
-        new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))),
-        null,
-        Granularities.ALL,
-        ImmutableList.of(new CountAggregatorFactory("metric1")),
-        ImmutableList.of(new ConstantPostAggregator("post", 10)),
-        null
-    );
+	@Test
+	public void testComputeCacheKeyWithDifferentPostAgg() {
+		final TopNQuery query1 = new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+				new DefaultDimensionSpec("test", "test"), new NumericTopNMetricSpec("post"), 3,
+				new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))), null,
+				Granularities.ALL, ImmutableList.of(new CountAggregatorFactory("metric1")),
+				ImmutableList.of(new ConstantPostAggregator("post", 10)), null);
 
-    final TopNQuery query2 = new TopNQuery(
-        new TableDataSource("dummy"),
-        VirtualColumns.EMPTY,
-        new DefaultDimensionSpec("test", "test"),
-        new NumericTopNMetricSpec("post"),
-        3,
-        new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))),
-        null,
-        Granularities.ALL,
-        ImmutableList.of(new CountAggregatorFactory("metric1")),
-        ImmutableList.of(
-            new ArithmeticPostAggregator(
-                "post",
-                "+",
-                ImmutableList.of(
-                    new FieldAccessPostAggregator(
-                        null,
-                        "metric1"
-                    ),
-                    new FieldAccessPostAggregator(
-                        null,
-                        "metric1"
-                    )
-                )
-            )
-        ),
-        null
-    );
+		final TopNQuery query2 = new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+				new DefaultDimensionSpec("test", "test"), new NumericTopNMetricSpec("post"), 3,
+				new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))), null,
+				Granularities.ALL, ImmutableList.of(new CountAggregatorFactory("metric1")),
+				ImmutableList.of(new ArithmeticPostAggregator("post", "+",
+						ImmutableList.of(new FieldAccessPostAggregator(null, "metric1"),
+								new FieldAccessPostAggregator(null, "metric1")))),
+				null);
 
-    final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy1 = new TopNQueryQueryToolChest(
-        null,
-        null
-    ).getCacheStrategy(query1);
+		final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy1 = new TopNQueryQueryToolChest(null,
+				null).getCacheStrategy(query1);
 
-    final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy2 = new TopNQueryQueryToolChest(
-        null,
-        null
-    ).getCacheStrategy(query2);
+		final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy2 = new TopNQueryQueryToolChest(null,
+				null).getCacheStrategy(query2);
 
-    Assert.assertFalse(Arrays.equals(strategy1.computeCacheKey(query1), strategy2.computeCacheKey(query2)));
-    Assert.assertFalse(Arrays.equals(
-        strategy1.computeResultLevelCacheKey(query1),
-        strategy2.computeResultLevelCacheKey(query2)
-    ));
-  }
+		Assert.assertFalse(Arrays.equals(strategy1.computeCacheKey(query1), strategy2.computeCacheKey(query2)));
+		Assert.assertFalse(Arrays.equals(strategy1.computeResultLevelCacheKey(query1),
+				strategy2.computeResultLevelCacheKey(query2)));
+	}
 
-  @Test
-  public void testComputeResultLevelCacheKeyWithDifferentPostAgg()
-  {
-    final TopNQuery query1 = new TopNQuery(
-        new TableDataSource("dummy"),
-        VirtualColumns.EMPTY,
-        new DefaultDimensionSpec("test", "test"),
-        new LegacyTopNMetricSpec("metric1"),
-        3,
-        new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01T18:00:00/2015-01-02T18:00:00"))),
-        null,
-        Granularities.ALL,
-        ImmutableList.of(
-            new LongSumAggregatorFactory("metric1", "metric1"),
-            new LongSumAggregatorFactory("metric2", "metric2")
-        ),
-        ImmutableList.of(
-            new ArithmeticPostAggregator(
-                "post1",
-                "/",
-                ImmutableList.of(
-                    new FieldAccessPostAggregator(
-                        "metric1",
-                        "metric1"
-                    ),
-                    new FieldAccessPostAggregator(
-                        "metric2",
-                        "metric2"
-                    )
-                )
-            )
-        ),
-        null
-    );
+	@Test
+	public void testComputeResultLevelCacheKeyWithDifferentPostAgg() {
+		final TopNQuery query1 = new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+				new DefaultDimensionSpec("test", "test"), new LegacyTopNMetricSpec("metric1"), 3,
+				new MultipleIntervalSegmentSpec(
+						ImmutableList.of(Intervals.of("2015-01-01T18:00:00/2015-01-02T18:00:00"))),
+				null, Granularities.ALL,
+				ImmutableList.of(new LongSumAggregatorFactory("metric1", "metric1"),
+						new LongSumAggregatorFactory("metric2", "metric2")),
+				ImmutableList.of(new ArithmeticPostAggregator("post1", "/",
+						ImmutableList.of(new FieldAccessPostAggregator("metric1", "metric1"),
+								new FieldAccessPostAggregator("metric2", "metric2")))),
+				null);
 
-    final TopNQuery query2 = new TopNQuery(
-        new TableDataSource("dummy"),
-        VirtualColumns.EMPTY,
-        new DefaultDimensionSpec("test", "test"),
-        new LegacyTopNMetricSpec("metric1"),
-        3,
-        new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01T18:00:00/2015-01-02T18:00:00"))),
-        null,
-        Granularities.ALL,
-        ImmutableList.of(
-            new LongSumAggregatorFactory("metric1", "metric1"),
-            new LongSumAggregatorFactory("metric2", "metric2")
-        ),
-        ImmutableList.of(
-            new ArithmeticPostAggregator(
-                "post2",
-                "+",
-                ImmutableList.of(
-                    new FieldAccessPostAggregator(
-                        "metric1",
-                        "metric1"
-                    ),
-                    new FieldAccessPostAggregator(
-                        "metric2",
-                        "metric2"
-                    )
-                )
-            )
-        ),
-        null
-    );
+		final TopNQuery query2 = new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+				new DefaultDimensionSpec("test", "test"), new LegacyTopNMetricSpec("metric1"), 3,
+				new MultipleIntervalSegmentSpec(
+						ImmutableList.of(Intervals.of("2015-01-01T18:00:00/2015-01-02T18:00:00"))),
+				null, Granularities.ALL,
+				ImmutableList.of(new LongSumAggregatorFactory("metric1", "metric1"),
+						new LongSumAggregatorFactory("metric2", "metric2")),
+				ImmutableList.of(new ArithmeticPostAggregator("post2", "+",
+						ImmutableList.of(new FieldAccessPostAggregator("metric1", "metric1"),
+								new FieldAccessPostAggregator("metric2", "metric2")))),
+				null);
 
-    final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy1 = new TopNQueryQueryToolChest(
-        null,
-        null
-    ).getCacheStrategy(query1);
+		final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy1 = new TopNQueryQueryToolChest(null,
+				null).getCacheStrategy(query1);
 
-    final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy2 = new TopNQueryQueryToolChest(
-        null,
-        null
-    ).getCacheStrategy(query2);
+		final CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy2 = new TopNQueryQueryToolChest(null,
+				null).getCacheStrategy(query2);
 
-    //segment level cache key excludes postaggregates in topn
-    Assert.assertTrue(Arrays.equals(strategy1.computeCacheKey(query1), strategy2.computeCacheKey(query2)));
-    Assert.assertFalse(Arrays.equals(strategy1.computeCacheKey(query1), strategy1.computeResultLevelCacheKey(query1)));
-    Assert.assertFalse(Arrays.equals(
-        strategy1.computeResultLevelCacheKey(query1),
-        strategy2.computeResultLevelCacheKey(query2)
-    ));
-  }
+		// segment level cache key excludes postaggregates in topn
+		Assert.assertTrue(Arrays.equals(strategy1.computeCacheKey(query1), strategy2.computeCacheKey(query2)));
+		Assert.assertFalse(
+				Arrays.equals(strategy1.computeCacheKey(query1), strategy1.computeResultLevelCacheKey(query1)));
+		Assert.assertFalse(Arrays.equals(strategy1.computeResultLevelCacheKey(query1),
+				strategy2.computeResultLevelCacheKey(query2)));
+	}
 
-  @Test
-  public void testMinTopNThreshold()
-  {
-    TopNQueryConfig config = new TopNQueryConfig();
-    final TopNQueryQueryToolChest chest = new TopNQueryQueryToolChest(config);
-    try (CloseableStupidPool<ByteBuffer> pool = TestQueryRunners.createDefaultNonBlockingPool()) {
-      QueryRunnerFactory factory = new TopNQueryRunnerFactory(
-          pool,
-          chest,
-          QueryRunnerTestHelper.NOOP_QUERYWATCHER
-      );
-      QueryRunner<Result<TopNResultValue>> runner = QueryRunnerTestHelper.makeQueryRunner(
-          factory,
-          new IncrementalIndexSegment(TestIndex.getIncrementalTestIndex(), SEGMENT_ID),
-          null
-      );
+	@Test
+	public void testMinTopNThreshold() {
+		TopNQueryConfig config = new TopNQueryConfig();
+		final TopNQueryQueryToolChest chest = new TopNQueryQueryToolChest(config);
+		try (CloseableStupidPool<ByteBuffer> pool = TestQueryRunners.createDefaultNonBlockingPool()) {
+			QueryRunnerFactory factory = new TopNQueryRunnerFactory(pool, chest,
+					QueryRunnerTestHelper.NOOP_QUERYWATCHER);
+			QueryRunner<Result<TopNResultValue>> runner = QueryRunnerTestHelper.makeQueryRunner(factory,
+					new IncrementalIndexSegment(TestIndex.getIncrementalTestIndex(), SEGMENT_ID), null);
 
-      Map<String, Object> context = new HashMap<>();
-      context.put("minTopNThreshold", 500);
+			Map<String, Object> context = new HashMap<>();
+			context.put("minTopNThreshold", 500);
 
-      TopNQueryBuilder builder = new TopNQueryBuilder()
-          .dataSource(QueryRunnerTestHelper.DATA_SOURCE)
-          .granularity(QueryRunnerTestHelper.ALL_GRAN)
-          .dimension(QueryRunnerTestHelper.PLACEMENTISH_DIMENSION)
-          .metric(QueryRunnerTestHelper.INDEX_METRIC)
-          .intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
-          .aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS);
+			TopNQueryBuilder builder = new TopNQueryBuilder().dataSource(QueryRunnerTestHelper.DATA_SOURCE)
+					.granularity(QueryRunnerTestHelper.ALL_GRAN).dimension(QueryRunnerTestHelper.PLACEMENTISH_DIMENSION)
+					.metric(QueryRunnerTestHelper.INDEX_METRIC).intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
+					.aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS);
 
-      TopNQuery query1 = builder.threshold(10).context(null).build();
-      MockQueryRunner mockRunner = new MockQueryRunner(runner);
-      new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query1));
-      Assert.assertEquals(1000, mockRunner.query.getThreshold());
+			TopNQuery query1 = builder.threshold(10).context(null).build();
+			// MockQueryRunner mockRunner = new MockQueryRunner(runner);
+			QueryRunner<Result<TopNResultValue>> mockRunner = Mockito.mock(QueryRunner.class);
+			TopNQuery[] query = new TopNQuery[1];
+			Mockito.when(mockRunner.run(Mockito.any(), Mockito.any())).thenAnswer(invo -> {
+				QueryPlus<Result<TopNResultValue>> queryPlus = invo.getArgument(0);
+				ResponseContext responseContext = invo.getArgument(1);
+				query[0] = (TopNQuery) queryPlus.getQuery();
+				return runner.run(queryPlus, responseContext);
+			});
+			new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query1));
+			Assert.assertEquals(1000, query[0].getThreshold());
 
-      TopNQuery query2 = builder.threshold(10).context(context).build();
+			TopNQuery query2 = builder.threshold(10).context(context).build();
 
-      new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query2));
-      Assert.assertEquals(500, mockRunner.query.getThreshold());
+			new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query2));
+			Assert.assertEquals(500, query[0].getThreshold());
 
-      TopNQuery query3 = builder.threshold(2000).context(context).build();
-      new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query3));
-      Assert.assertEquals(2000, mockRunner.query.getThreshold());
-    }
-  }
+			TopNQuery query3 = builder.threshold(2000).context(context).build();
+			new TopNQueryQueryToolChest.ThresholdAdjustingQueryRunner(mockRunner, config).run(QueryPlus.wrap(query3));
+			Assert.assertEquals(2000, query[0].getThreshold());
+		}
+	}
 
-  @Test
-  public void testResultArraySignature()
-  {
-    final TopNQuery query = new TopNQueryBuilder()
-        .dataSource(QueryRunnerTestHelper.DATA_SOURCE)
-        .granularity(Granularities.ALL)
-        .dimension(new DefaultDimensionSpec("col", "dim"))
-        .metric(QueryRunnerTestHelper.INDEX_METRIC)
-        .intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
-        .aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS)
-        .postAggregators(QueryRunnerTestHelper.CONSTANT)
-        .threshold(1)
-        .build();
+	@Test
+	public void testResultArraySignature() {
+		final TopNQuery query = new TopNQueryBuilder().dataSource(QueryRunnerTestHelper.DATA_SOURCE)
+				.granularity(Granularities.ALL).dimension(new DefaultDimensionSpec("col", "dim"))
+				.metric(QueryRunnerTestHelper.INDEX_METRIC).intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
+				.aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS)
+				.postAggregators(QueryRunnerTestHelper.CONSTANT).threshold(1).build();
 
-    Assert.assertEquals(
-        RowSignature.builder()
-                    .addTimeColumn()
-                    .add("dim", ValueType.STRING)
-                    .add("rows", ValueType.LONG)
-                    .add("index", ValueType.DOUBLE)
-                    .add("uniques", null)
-                    .add("const", null)
-                    .build(),
-        new TopNQueryQueryToolChest(null, null).resultArraySignature(query)
-    );
-  }
+		Assert.assertEquals(
+				RowSignature.builder().addTimeColumn().add("dim", ValueType.STRING).add("rows", ValueType.LONG)
+						.add("index", ValueType.DOUBLE).add("uniques", null).add("const", null).build(),
+				new TopNQueryQueryToolChest(null, null).resultArraySignature(query));
+	}
 
-  @Test
-  public void testResultsAsArrays()
-  {
-    final TopNQuery query = new TopNQueryBuilder()
-        .dataSource(QueryRunnerTestHelper.DATA_SOURCE)
-        .granularity(Granularities.ALL)
-        .dimension(new DefaultDimensionSpec("col", "dim"))
-        .metric(QueryRunnerTestHelper.INDEX_METRIC)
-        .intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
-        .aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS)
-        .postAggregators(QueryRunnerTestHelper.CONSTANT)
-        .threshold(1)
-        .build();
+	@Test
+	public void testResultsAsArrays() {
+		final TopNQuery query = new TopNQueryBuilder().dataSource(QueryRunnerTestHelper.DATA_SOURCE)
+				.granularity(Granularities.ALL).dimension(new DefaultDimensionSpec("col", "dim"))
+				.metric(QueryRunnerTestHelper.INDEX_METRIC).intervals(QueryRunnerTestHelper.FULL_ON_INTERVAL_SPEC)
+				.aggregators(QueryRunnerTestHelper.COMMON_DOUBLE_AGGREGATORS)
+				.postAggregators(QueryRunnerTestHelper.CONSTANT).threshold(1).build();
 
-    QueryToolChestTestHelper.assertArrayResultsEquals(
-        ImmutableList.of(
-            new Object[]{DateTimes.of("2000").getMillis(), "foo", 1L, 2L, 3L, 1L},
-            new Object[]{DateTimes.of("2000").getMillis(), "bar", 4L, 5L, 6L, 1L}
-        ),
-        new TopNQueryQueryToolChest(null, null).resultsAsArrays(
-            query,
-            Sequences.simple(
-                ImmutableList.of(
-                    new Result<>(
-                        DateTimes.of("2000"),
-                        new TopNResultValue(
-                            ImmutableList.of(
-                                new DimensionAndMetricValueExtractor(
-                                    ImmutableMap.of("dim", "foo", "rows", 1L, "index", 2L, "uniques", 3L, "const", 1L)
-                                ),
-                                new DimensionAndMetricValueExtractor(
-                                    ImmutableMap.of("dim", "bar", "rows", 4L, "index", 5L, "uniques", 6L, "const", 1L)
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        )
-    );
-  }
+		QueryToolChestTestHelper.assertArrayResultsEquals(
+				ImmutableList.of(new Object[] { DateTimes.of("2000").getMillis(), "foo", 1L, 2L, 3L, 1L },
+						new Object[] { DateTimes.of("2000").getMillis(), "bar", 4L, 5L, 6L, 1L }),
+				new TopNQueryQueryToolChest(null, null).resultsAsArrays(query,
+						Sequences.simple(ImmutableList.of(new Result<>(DateTimes.of("2000"),
+								new TopNResultValue(ImmutableList.of(
+										new DimensionAndMetricValueExtractor(ImmutableMap.of("dim", "foo", "rows", 1L,
+												"index", 2L, "uniques", 3L, "const", 1L)),
+										new DimensionAndMetricValueExtractor(ImmutableMap.of("dim", "bar", "rows", 4L,
+												"index", 5L, "uniques", 6L, "const", 1L)))))))));
+	}
 
-  private AggregatorFactory getComplexAggregatorFactoryForValueType(final ValueType valueType)
-  {
-    switch (valueType) {
-      case LONG:
-        return new LongLastAggregatorFactory("complexMetric", "test");
-      case DOUBLE:
-        return new DoubleLastAggregatorFactory("complexMetric", "test");
-      case FLOAT:
-        return new FloatLastAggregatorFactory("complexMetric", "test");
-      case STRING:
-        return new StringLastAggregatorFactory("complexMetric", "test", null);
-      default:
-        throw new IllegalArgumentException("bad valueType: " + valueType);
-    }
-  }
+	private AggregatorFactory getComplexAggregatorFactoryForValueType(final ValueType valueType) {
+		switch (valueType) {
+		case LONG:
+			return new LongLastAggregatorFactory("complexMetric", "test");
+		case DOUBLE:
+			return new DoubleLastAggregatorFactory("complexMetric", "test");
+		case FLOAT:
+			return new FloatLastAggregatorFactory("complexMetric", "test");
+		case STRING:
+			return new StringLastAggregatorFactory("complexMetric", "test", null);
+		default:
+			throw new IllegalArgumentException("bad valueType: " + valueType);
+		}
+	}
 
-  private SerializablePair getIntermediateComplexValue(final ValueType valueType, final Object dimValue)
-  {
-    switch (valueType) {
-      case LONG:
-      case DOUBLE:
-      case FLOAT:
-        return new SerializablePair<>(123L, dimValue);
-      case STRING:
-        return new SerializablePairLongString(123L, (String) dimValue);
-      default:
-        throw new IllegalArgumentException("bad valueType: " + valueType);
-    }
-  }
+	private SerializablePair getIntermediateComplexValue(final ValueType valueType, final Object dimValue) {
+		switch (valueType) {
+		case LONG:
+		case DOUBLE:
+		case FLOAT:
+			return new SerializablePair<>(123L, dimValue);
+		case STRING:
+			return new SerializablePairLongString(123L, (String) dimValue);
+		default:
+			throw new IllegalArgumentException("bad valueType: " + valueType);
+		}
+	}
 
-  private HyperLogLogCollector getIntermediateHllCollector(final ValueType valueType, final Object dimValue)
-  {
-    HyperLogLogCollector collector = HyperLogLogCollector.makeLatestCollector();
-    switch (valueType) {
-      case LONG:
-        collector.add(CardinalityAggregator.HASH_FUNCTION.hashLong((Long) dimValue).asBytes());
-        break;
-      case DOUBLE:
-        collector.add(CardinalityAggregator.HASH_FUNCTION.hashLong(Double.doubleToLongBits((Double) dimValue))
-                                                         .asBytes());
-        break;
-      case FLOAT:
-        collector.add(CardinalityAggregator.HASH_FUNCTION.hashInt(Float.floatToIntBits((Float) dimValue)).asBytes());
-        break;
-      case STRING:
-        collector.add(CardinalityAggregator.HASH_FUNCTION.hashUnencodedChars((String) dimValue).asBytes());
-        break;
-      default:
-        throw new IllegalArgumentException("bad valueType: " + valueType);
-    }
-    return collector;
-  }
+	private HyperLogLogCollector getIntermediateHllCollector(final ValueType valueType, final Object dimValue) {
+		HyperLogLogCollector collector = HyperLogLogCollector.makeLatestCollector();
+		switch (valueType) {
+		case LONG:
+			collector.add(CardinalityAggregator.HASH_FUNCTION.hashLong((Long) dimValue).asBytes());
+			break;
+		case DOUBLE:
+			collector.add(
+					CardinalityAggregator.HASH_FUNCTION.hashLong(Double.doubleToLongBits((Double) dimValue)).asBytes());
+			break;
+		case FLOAT:
+			collector
+					.add(CardinalityAggregator.HASH_FUNCTION.hashInt(Float.floatToIntBits((Float) dimValue)).asBytes());
+			break;
+		case STRING:
+			collector.add(CardinalityAggregator.HASH_FUNCTION.hashUnencodedChars((String) dimValue).asBytes());
+			break;
+		default:
+			throw new IllegalArgumentException("bad valueType: " + valueType);
+		}
+		return collector;
+	}
 
-  private void doTestCacheStrategy(final ValueType valueType, final Object dimValue) throws IOException
-  {
-    CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy =
-        new TopNQueryQueryToolChest(null, null).getCacheStrategy(
-            new TopNQuery(
-                new TableDataSource("dummy"),
-                VirtualColumns.EMPTY,
-                new DefaultDimensionSpec("test", "test", valueType),
-                new NumericTopNMetricSpec("metric1"),
-                3,
-                new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))),
-                null,
-                Granularities.ALL,
-                ImmutableList.of(
-                    new CountAggregatorFactory("metric1"),
-                    getComplexAggregatorFactoryForValueType(valueType)
-                ),
-                ImmutableList.of(new ConstantPostAggregator("post", 10)),
-                null
-            )
-        );
+	private void doTestCacheStrategy(final ValueType valueType, final Object dimValue) throws IOException {
+		CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy = new TopNQueryQueryToolChest(null, null)
+				.getCacheStrategy(new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+						new DefaultDimensionSpec("test", "test", valueType), new NumericTopNMetricSpec("metric1"), 3,
+						new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))), null,
+						Granularities.ALL,
+						ImmutableList.of(new CountAggregatorFactory("metric1"),
+								getComplexAggregatorFactoryForValueType(valueType)),
+						ImmutableList.of(new ConstantPostAggregator("post", 10)), null));
 
-    final Result<TopNResultValue> result1 = new Result<>(
-        // test timestamps that result in integer size millis
-        DateTimes.utc(123L),
-        new TopNResultValue(
-            Collections.singletonList(
-                ImmutableMap.of(
-                    "test", dimValue,
-                    "metric1", 2,
-                    "complexMetric", getIntermediateComplexValue(valueType, dimValue)
-                )
-            )
-        )
-    );
+		final Result<TopNResultValue> result1 = new Result<>(
+				// test timestamps that result in integer size millis
+				DateTimes.utc(123L), new TopNResultValue(Collections.singletonList(ImmutableMap.of("test", dimValue,
+						"metric1", 2, "complexMetric", getIntermediateComplexValue(valueType, dimValue)))));
 
-    Object preparedValue = strategy.prepareForSegmentLevelCache().apply(
-        result1
-    );
+		Object preparedValue = strategy.prepareForSegmentLevelCache().apply(result1);
 
-    ObjectMapper objectMapper = TestHelper.makeJsonMapper();
-    Object fromCacheValue = objectMapper.readValue(
-        objectMapper.writeValueAsBytes(preparedValue),
-        strategy.getCacheObjectClazz()
-    );
+		ObjectMapper objectMapper = TestHelper.makeJsonMapper();
+		Object fromCacheValue = objectMapper.readValue(objectMapper.writeValueAsBytes(preparedValue),
+				strategy.getCacheObjectClazz());
 
-    Result<TopNResultValue> fromCacheResult = strategy.pullFromSegmentLevelCache().apply(fromCacheValue);
+		Result<TopNResultValue> fromCacheResult = strategy.pullFromSegmentLevelCache().apply(fromCacheValue);
 
-    Assert.assertEquals(result1, fromCacheResult);
+		Assert.assertEquals(result1, fromCacheResult);
 
-    final Result<TopNResultValue> result2 = new Result<>(
-        // test timestamps that result in integer size millis
-        DateTimes.utc(123L),
-        new TopNResultValue(
-            Collections.singletonList(
-                ImmutableMap.of(
-                    "test", dimValue,
-                    "metric1", 2,
-                    "complexMetric", dimValue,
-                    "post", 10
-                )
-            )
-        )
-    );
+		final Result<TopNResultValue> result2 = new Result<>(
+				// test timestamps that result in integer size millis
+				DateTimes.utc(123L), new TopNResultValue(Collections.singletonList(
+						ImmutableMap.of("test", dimValue, "metric1", 2, "complexMetric", dimValue, "post", 10))));
 
-    // Please see the comments on aggregator serde and type handling in CacheStrategy.fetchAggregatorsFromCache()
-    final Result<TopNResultValue> typeAdjustedResult2;
-    if (valueType == ValueType.FLOAT) {
-      typeAdjustedResult2 = new Result<>(
-          DateTimes.utc(123L),
-          new TopNResultValue(
-              Collections.singletonList(
-                  ImmutableMap.of(
-                      "test", dimValue,
-                      "metric1", 2,
-                      "complexMetric", 2.1d,
-                      "post", 10
-                  )
-              )
-          )
-      );
-    } else if (valueType == ValueType.LONG) {
-      typeAdjustedResult2 = new Result<>(
-          DateTimes.utc(123L),
-          new TopNResultValue(
-              Collections.singletonList(
-                  ImmutableMap.of(
-                      "test", dimValue,
-                      "metric1", 2,
-                      "complexMetric", 2,
-                      "post", 10
-                  )
-              )
-          )
-      );
-    } else {
-      typeAdjustedResult2 = result2;
-    }
+		// Please see the comments on aggregator serde and type handling in
+		// CacheStrategy.fetchAggregatorsFromCache()
+		final Result<TopNResultValue> typeAdjustedResult2;
+		if (valueType == ValueType.FLOAT) {
+			typeAdjustedResult2 = new Result<>(DateTimes.utc(123L), new TopNResultValue(Collections.singletonList(
+					ImmutableMap.of("test", dimValue, "metric1", 2, "complexMetric", 2.1d, "post", 10))));
+		} else if (valueType == ValueType.LONG) {
+			typeAdjustedResult2 = new Result<>(DateTimes.utc(123L), new TopNResultValue(Collections
+					.singletonList(ImmutableMap.of("test", dimValue, "metric1", 2, "complexMetric", 2, "post", 10))));
+		} else {
+			typeAdjustedResult2 = result2;
+		}
 
+		Object preparedResultCacheValue = strategy.prepareForCache(true).apply(result2);
 
-    Object preparedResultCacheValue = strategy.prepareForCache(true).apply(
-        result2
-    );
+		Object fromResultCacheValue = objectMapper.readValue(objectMapper.writeValueAsBytes(preparedResultCacheValue),
+				strategy.getCacheObjectClazz());
 
-    Object fromResultCacheValue = objectMapper.readValue(
-        objectMapper.writeValueAsBytes(preparedResultCacheValue),
-        strategy.getCacheObjectClazz()
-    );
+		Result<TopNResultValue> fromResultCacheResult = strategy.pullFromCache(true).apply(fromResultCacheValue);
+		Assert.assertEquals(typeAdjustedResult2, fromResultCacheResult);
+	}
 
-    Result<TopNResultValue> fromResultCacheResult = strategy.pullFromCache(true).apply(fromResultCacheValue);
-    Assert.assertEquals(typeAdjustedResult2, fromResultCacheResult);
-  }
+	private void doTestCacheStrategyOrderByPost(final ValueType valueType, final Object dimValue) throws IOException {
+		CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy = new TopNQueryQueryToolChest(null, null)
+				.getCacheStrategy(new TopNQuery(new TableDataSource("dummy"), VirtualColumns.EMPTY,
+						new DefaultDimensionSpec("test", "test", valueType), new NumericTopNMetricSpec("post"), 3,
+						new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))), null,
+						Granularities.ALL,
+						ImmutableList.of(new HyperUniquesAggregatorFactory("metric1", "test", false, false),
+								new CountAggregatorFactory("metric2")),
+						ImmutableList.of(new ArithmeticPostAggregator("post", "+",
+								ImmutableList.of(new FinalizingFieldAccessPostAggregator("metric1", "metric1"),
+										new FieldAccessPostAggregator("metric2", "metric2")))),
+						null));
 
-  private void doTestCacheStrategyOrderByPost(final ValueType valueType, final Object dimValue) throws IOException
-  {
-    CacheStrategy<Result<TopNResultValue>, Object, TopNQuery> strategy =
-        new TopNQueryQueryToolChest(null, null).getCacheStrategy(
-            new TopNQuery(
-                new TableDataSource("dummy"),
-                VirtualColumns.EMPTY,
-                new DefaultDimensionSpec("test", "test", valueType),
-                new NumericTopNMetricSpec("post"),
-                3,
-                new MultipleIntervalSegmentSpec(ImmutableList.of(Intervals.of("2015-01-01/2015-01-02"))),
-                null,
-                Granularities.ALL,
-                ImmutableList.of(
-                    new HyperUniquesAggregatorFactory("metric1", "test", false, false),
-                    new CountAggregatorFactory("metric2")
-                ),
-                ImmutableList.of(
-                    new ArithmeticPostAggregator(
-                        "post",
-                        "+",
-                        ImmutableList.of(
-                            new FinalizingFieldAccessPostAggregator(
-                                "metric1",
-                                "metric1"
-                            ),
-                            new FieldAccessPostAggregator(
-                                "metric2",
-                                "metric2"
-                            )
-                        )
-                    )
-                ),
-                null
-            )
-        );
+		HyperLogLogCollector collector = getIntermediateHllCollector(valueType, dimValue);
 
-    HyperLogLogCollector collector = getIntermediateHllCollector(valueType, dimValue);
+		final Result<TopNResultValue> result1 = new Result<>(
+				// test timestamps that result in integer size millis
+				DateTimes.utc(123L), new TopNResultValue(Collections.singletonList(ImmutableMap.of("test", dimValue,
+						"metric1", collector, "metric2", 2, "post", collector.estimateCardinality() + 2))));
 
-    final Result<TopNResultValue> result1 = new Result<>(
-        // test timestamps that result in integer size millis
-        DateTimes.utc(123L),
-        new TopNResultValue(
-            Collections.singletonList(
-                ImmutableMap.of(
-                    "test", dimValue,
-                    "metric1", collector,
-                    "metric2", 2,
-                    "post", collector.estimateCardinality() + 2
-                )
-            )
-        )
-    );
+		Object preparedValue = strategy.prepareForSegmentLevelCache().apply(result1);
 
-    Object preparedValue = strategy.prepareForSegmentLevelCache().apply(
-        result1
-    );
+		ObjectMapper objectMapper = TestHelper.makeJsonMapper();
+		Object fromCacheValue = objectMapper.readValue(objectMapper.writeValueAsBytes(preparedValue),
+				strategy.getCacheObjectClazz());
 
-    ObjectMapper objectMapper = TestHelper.makeJsonMapper();
-    Object fromCacheValue = objectMapper.readValue(
-        objectMapper.writeValueAsBytes(preparedValue),
-        strategy.getCacheObjectClazz()
-    );
+		Result<TopNResultValue> fromCacheResult = strategy.pullFromSegmentLevelCache().apply(fromCacheValue);
 
-    Result<TopNResultValue> fromCacheResult = strategy.pullFromSegmentLevelCache().apply(fromCacheValue);
+		Assert.assertEquals(result1, fromCacheResult);
 
-    Assert.assertEquals(result1, fromCacheResult);
+		final Result<TopNResultValue> resultLevelCacheResult = new Result<>(
+				// test timestamps that result in integer size millis
+				DateTimes.utc(123L),
+				new TopNResultValue(Collections.singletonList(ImmutableMap.of("test", dimValue, "metric1",
+						collector.estimateCardinality(), "metric2", 2, "post", collector.estimateCardinality() + 2))));
 
-    final Result<TopNResultValue> resultLevelCacheResult = new Result<>(
-        // test timestamps that result in integer size millis
-        DateTimes.utc(123L),
-        new TopNResultValue(
-            Collections.singletonList(
-                ImmutableMap.of(
-                    "test", dimValue,
-                    "metric1", collector.estimateCardinality(),
-                    "metric2", 2,
-                    "post", collector.estimateCardinality() + 2
-                )
-            )
-        )
-    );
+		Object preparedResultCacheValue = strategy.prepareForCache(true).apply(resultLevelCacheResult);
 
-    Object preparedResultCacheValue = strategy.prepareForCache(true).apply(
-        resultLevelCacheResult
-    );
+		Object fromResultCacheValue = objectMapper.readValue(objectMapper.writeValueAsBytes(preparedResultCacheValue),
+				strategy.getCacheObjectClazz());
 
-    Object fromResultCacheValue = objectMapper.readValue(
-        objectMapper.writeValueAsBytes(preparedResultCacheValue),
-        strategy.getCacheObjectClazz()
-    );
+		Result<TopNResultValue> fromResultCacheResult = strategy.pullFromCache(true).apply(fromResultCacheValue);
+		Assert.assertEquals(resultLevelCacheResult, fromResultCacheResult);
+	}
 
-    Result<TopNResultValue> fromResultCacheResult = strategy.pullFromCache(true).apply(fromResultCacheValue);
-    Assert.assertEquals(resultLevelCacheResult, fromResultCacheResult);
-  }
+	static class MockQueryRunner implements QueryRunner<Result<TopNResultValue>> {
+		private final QueryRunner<Result<TopNResultValue>> runner;
+		TopNQuery query = null;
 
-  static class MockQueryRunner implements QueryRunner<Result<TopNResultValue>>
-  {
-    private final QueryRunner<Result<TopNResultValue>> runner;
-    TopNQuery query = null;
+		MockQueryRunner(QueryRunner<Result<TopNResultValue>> runner) {
+			this.runner = runner;
+		}
 
-    MockQueryRunner(QueryRunner<Result<TopNResultValue>> runner)
-    {
-      this.runner = runner;
-    }
-
-    @Override
-    public Sequence<Result<TopNResultValue>> run(
-        QueryPlus<Result<TopNResultValue>> queryPlus,
-        ResponseContext responseContext
-    )
-    {
-      this.query = (TopNQuery) queryPlus.getQuery();
-      return runner.run(queryPlus, responseContext);
-    }
-  }
+		@Override
+		public Sequence<Result<TopNResultValue>> run(QueryPlus<Result<TopNResultValue>> queryPlus,
+				ResponseContext responseContext) {
+			this.query = (TopNQuery) queryPlus.getQuery();
+			return runner.run(queryPlus, responseContext);
+		}
+	}
 }

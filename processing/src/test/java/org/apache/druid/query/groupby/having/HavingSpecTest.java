@@ -182,6 +182,19 @@ public class HavingSpecTest {
 		Assert.assertFalse(spec.eval(getTestRow(Long.MAX_VALUE)));
 	}
 
+	private static HavingSpec mockHavingSpec(final AtomicInteger counter, final boolean value) {
+		HavingSpec res = Mockito.mock(HavingSpec.class);
+		Mockito.when(res.eval(Mockito.any())).thenAnswer(invo -> {
+			counter.incrementAndGet();
+			return value;
+		});
+		Mockito.when(res.getCacheKey()).thenAnswer(invo -> {
+			return new CacheKeyBuilder(HavingSpecUtil.CACHE_TYPE_ID_COUNTING).appendByte((byte) (value ? 1 : 0))
+					.appendByteArray(StringUtils.toUtf8(String.valueOf(counter))).build();
+		});
+		return res;
+	}
+
 	private static class CountingHavingSpec implements HavingSpec {
 
 		private final AtomicInteger counter;
@@ -265,18 +278,16 @@ public class HavingSpecTest {
 	@Test
 	public void testAndHavingSpec() {
 		AtomicInteger counter = new AtomicInteger(0);
-		AndHavingSpec spec = new AndHavingSpec(
-				ImmutableList.of(new CountingHavingSpec(counter, true), new CountingHavingSpec(counter, true),
-						new CountingHavingSpec(counter, true), new CountingHavingSpec(counter, true)));
+		AndHavingSpec spec = new AndHavingSpec(ImmutableList.of(mockHavingSpec(counter, true),
+				mockHavingSpec(counter, true), mockHavingSpec(counter, true), mockHavingSpec(counter, true)));
 
 		spec.eval(ROW);
 
 		Assert.assertEquals(4, counter.get());
 
 		counter.set(0);
-		spec = new AndHavingSpec(
-				ImmutableList.of(new CountingHavingSpec(counter, false), new CountingHavingSpec(counter, true),
-						new CountingHavingSpec(counter, true), new CountingHavingSpec(counter, true)));
+		spec = new AndHavingSpec(ImmutableList.of(mockHavingSpec(counter, false), mockHavingSpec(counter, true),
+				mockHavingSpec(counter, true), mockHavingSpec(counter, true)));
 
 		spec.eval(ROW);
 

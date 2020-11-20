@@ -73,6 +73,13 @@ public class FilterPartitionTest extends BaseFilterTest {
 		}
 	}
 
+	private SelectorFilter mockSelectorFilter(String dimension, String value) {
+		SelectorFilter res = Mockito.mock(SelectorFilter.class,
+				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor(dimension, value));
+		Mockito.doReturn(false).when(res).supportsBitmapIndex(Mockito.any());
+		return res;
+	}
+
 	private static class NoBitmapDimensionPredicateFilter extends DimensionPredicateFilter {
 		public NoBitmapDimensionPredicateFilter(final String dimension, final DruidPredicateFactory predicateFactory,
 				final ExtractionFn extractionFn) {
@@ -83,6 +90,58 @@ public class FilterPartitionTest extends BaseFilterTest {
 		public boolean supportsBitmapIndex(BitmapIndexSelector selector) {
 			return false;
 		}
+	}
+
+	private static DimensionPredicateFilter mockDimensionPredicateFilter(final String dimension,
+			final DruidPredicateFactory predicateFactory, final ExtractionFn extractionFn) {
+		DimensionPredicateFilter res = Mockito
+				.spy(new DimensionPredicateFilter(dimension, predicateFactory, extractionFn));
+		Mockito.doReturn(false).when(res).supportsBitmapIndex(Mockito.any());
+		return res;
+	}
+
+	private static SelectorDimFilter mockSelectorDimFilter(String dim, String val, ExtractionFn efn) {
+		SelectorDimFilter res = Mockito.spy(new SelectorDimFilter(dim, val, efn));
+		Mockito.when(res.toFilter()).thenAnswer(invo -> {
+			ExtractionFn extractionFn = res.getExtractionFn();
+			String dimension = res.getDimension();
+			String value = res.getValue();
+			if (extractionFn == null) {
+				SelectorFilter filter = Mockito.mock(SelectorFilter.class, Mockito.withSettings()
+						.useConstructor(dimension, value).defaultAnswer(Mockito.CALLS_REAL_METHODS));
+				// Mockito.when(filter.supportsBitmapIndex(Mockito.any())).thenReturn(false);
+				Mockito.doReturn(false).when(filter).supportsBitmapIndex(Mockito.any());
+				// return new NoBitmapSelectorFilter(dimension, value);
+				return filter;
+			} else {
+				final String valueOrNull = NullHandling.emptyToNullIfNeeded(value);
+				final DruidPredicateFactory predicateFactory = new DruidPredicateFactory() {
+					@Override
+					public Predicate<String> makeStringPredicate() {
+						return input -> Objects.equals(valueOrNull, input);
+					}
+
+					@Override
+					public DruidLongPredicate makeLongPredicate() {
+						return input -> Objects.equals(valueOrNull, String.valueOf(input));
+					}
+
+					@Override
+					public DruidFloatPredicate makeFloatPredicate() {
+						return input -> Objects.equals(valueOrNull, String.valueOf(input));
+					}
+
+					@Override
+					public DruidDoublePredicate makeDoublePredicate() {
+						return input -> Objects.equals(valueOrNull, String.valueOf(input));
+					}
+
+				};
+
+				return mockDimensionPredicateFilter(dimension, predicateFactory, extractionFn);
+			}
+		});
+		return res;
 	}
 
 	private static class NoBitmapSelectorDimFilter extends SelectorDimFilter {
@@ -127,7 +186,7 @@ public class FilterPartitionTest extends BaseFilterTest {
 
 				};
 
-				return new NoBitmapDimensionPredicateFilter(dimension, predicateFactory, extractionFn);
+				return mockDimensionPredicateFilter(dimension, predicateFactory, extractionFn);
 			}
 		}
 	}
@@ -204,8 +263,9 @@ public class FilterPartitionTest extends BaseFilterTest {
 	@Test
 	public void testBasicPreAndPostFilterWithNulls() {
 		if (NullHandling.replaceWithDefault()) {
-			assertFilterMatches(new AndDimFilter(Arrays.asList(new SelectorDimFilter("dim2", "a", null),
-					new NoBitmapSelectorDimFilter("dim1", null, null))), ImmutableList.of("0"));
+			assertFilterMatches(new AndDimFilter(
+					Arrays.asList(new SelectorDimFilter("dim2", "a", null), mockSelectorDimFilter("dim1", null, null))),
+					ImmutableList.of("0"));
 		} else {
 			assertFilterMatches(new AndDimFilter(Arrays.asList(new SelectorDimFilter("dim2", "a", null),
 					new NoBitmapSelectorDimFilter("dim1", null, null))), ImmutableList.of());
@@ -493,7 +553,7 @@ public class FilterPartitionTest extends BaseFilterTest {
 		Assert.assertTrue(filterAnalysisNormal.getPostFilter() == null);
 
 		// no bitmap index, should be a post filter
-		Filter noBitmapFilter = new NoBitmapSelectorFilter("dim1", "HELLO");
+		Filter noBitmapFilter = mockSelectorFilter("dim1", "HELLO");
 		QueryableIndexStorageAdapter.FilterAnalysis noBitmapFilterAnalysis = storageAdapter
 				.analyzeFilter(noBitmapFilter, bitmapIndexSelector, null);
 		Assert.assertTrue(noBitmapFilterAnalysis.getPreFilterBitmap() == null);

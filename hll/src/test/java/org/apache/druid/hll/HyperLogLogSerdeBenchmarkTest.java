@@ -89,8 +89,8 @@ public class HyperLogLogSerdeBenchmarkTest extends AbstractBenchmark {
 
 			return myBuffer.asReadOnlyBuffer();
 		});
-		return ImmutableList.of((Object[]) Arrays.asList(new priorByteBufferSerializer(), new Long(1 << 10)).toArray(),
-				(Object[]) Arrays.asList(new newByteBufferSerializer(), new Long(1 << 10)).toArray(),
+		return ImmutableList.of((Object[]) Arrays.asList(mockpriorByteBufferSerializer(), new Long(1 << 10)).toArray(),
+				(Object[]) Arrays.asList(mocknewByteBufferSerializer(), new Long(1 << 10)).toArray(),
 				(Object[]) Arrays.asList(new newByteBufferSerializerWithPuts(), new Long(1 << 10)).toArray(),
 				(Object[]) Arrays.asList(prior, new Long(1 << 8)).toArray(),
 				(Object[]) Arrays.asList(new newByteBufferSerializer(), new Long(1 << 8)).toArray(),
@@ -101,6 +101,91 @@ public class HyperLogLogSerdeBenchmarkTest extends AbstractBenchmark {
 				(Object[]) Arrays.asList(new priorByteBufferSerializer(), new Long(1 << 2)).toArray(),
 				(Object[]) Arrays.asList(new newByteBufferSerializer(), new Long(1 << 2)).toArray(),
 				(Object[]) Arrays.asList(new newByteBufferSerializerWithPuts(), new Long(1 << 2)).toArray());
+	}
+
+	private static VersionOneHyperLogLogCollector mocknewByteBufferSerializer() {
+		VersionOneHyperLogLogCollector res = Mockito.spy(new VersionOneHyperLogLogCollector());
+		Mockito.doAnswer(invo -> {
+			final ByteBuffer myBuffer = res.getStorageBuffer();
+			final int initialPosition = res.getInitPosition();
+			final short numNonZeroRegisters = res.getNumNonZeroRegisters();
+
+			// store sparsely
+			if (myBuffer.remaining() == res.getNumBytesForDenseStorage() && numNonZeroRegisters < res.DENSE_THRESHOLD) {
+				final ByteBuffer retVal = ByteBuffer.wrap(new byte[numNonZeroRegisters * 3 + res.getNumHeaderBytes()]);
+				res.setVersion(retVal);
+				res.setRegisterOffset(retVal, res.getRegisterOffset());
+				res.setNumNonZeroRegisters(retVal, numNonZeroRegisters);
+				res.setMaxOverflowValue(retVal, res.getMaxOverflowValue());
+				res.setMaxOverflowRegister(retVal, res.getMaxOverflowRegister());
+
+				final int startPosition = res.getPayloadBytePosition();
+				retVal.position(res.getPayloadBytePosition(retVal));
+
+				final byte[] zipperBuffer = new byte[res.NUM_BYTES_FOR_BUCKETS];
+				ByteBuffer roStorageBuffer = myBuffer.asReadOnlyBuffer();
+				roStorageBuffer.position(startPosition);
+				roStorageBuffer.get(zipperBuffer);
+
+				final ByteOrder byteOrder = retVal.order();
+
+				final byte[] tempBuffer = new byte[numNonZeroRegisters * 3];
+				int outBufferPos = 0;
+				for (int i = 0; i < res.NUM_BYTES_FOR_BUCKETS; ++i) {
+					if (zipperBuffer[i] != 0) {
+						final short val = (short) (0xffff & (i + startPosition - initialPosition));
+						if (byteOrder.equals(ByteOrder.LITTLE_ENDIAN)) {
+							tempBuffer[outBufferPos + 0] = (byte) (0xff & val);
+							tempBuffer[outBufferPos + 1] = (byte) (0xff & (val >> 8));
+						} else {
+							tempBuffer[outBufferPos + 1] = (byte) (0xff & val);
+							tempBuffer[outBufferPos + 0] = (byte) (0xff & (val >> 8));
+						}
+						tempBuffer[outBufferPos + 2] = zipperBuffer[i];
+						outBufferPos += 3;
+					}
+				}
+				retVal.put(tempBuffer);
+				retVal.rewind();
+				return retVal.asReadOnlyBuffer();
+			}
+
+			return myBuffer.asReadOnlyBuffer();
+		}).when(res).toByteBuffer();
+		return res;
+	}
+
+	private static VersionOneHyperLogLogCollector mockpriorByteBufferSerializer() {
+		VersionOneHyperLogLogCollector res = Mockito.spy(new VersionOneHyperLogLogCollector());
+		Mockito.when(res.toByteBuffer()).thenAnswer(invo -> {
+			final ByteBuffer myBuffer = res.getStorageBuffer();
+			final int initialPosition = res.getInitPosition();
+			short numNonZeroRegisters = res.getNumNonZeroRegisters();
+
+			// store sparsely
+			if (myBuffer.remaining() == res.getNumBytesForDenseStorage() && numNonZeroRegisters < res.DENSE_THRESHOLD) {
+				ByteBuffer retVal = ByteBuffer.wrap(new byte[numNonZeroRegisters * 3 + res.getNumHeaderBytes()]);
+				res.setVersion(retVal);
+				res.setRegisterOffset(retVal, res.getRegisterOffset());
+				res.setNumNonZeroRegisters(retVal, numNonZeroRegisters);
+				res.setMaxOverflowValue(retVal, res.getMaxOverflowValue());
+				res.setMaxOverflowRegister(retVal, res.getMaxOverflowRegister());
+
+				int startPosition = res.getPayloadBytePosition();
+				retVal.position(res.getPayloadBytePosition(retVal));
+				for (int i = startPosition; i < startPosition + res.NUM_BYTES_FOR_BUCKETS; i++) {
+					if (myBuffer.get(i) != 0) {
+						retVal.putShort((short) (0xffff & (i - initialPosition)));
+						retVal.put(myBuffer.get(i));
+					}
+				}
+				retVal.rewind();
+				return retVal.asReadOnlyBuffer();
+			}
+
+			return myBuffer.asReadOnlyBuffer();
+		});
+		return res;
 	}
 
 	private static final class priorByteBufferSerializer extends VersionOneHyperLogLogCollector {

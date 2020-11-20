@@ -19,13 +19,19 @@
 
 package org.apache.druid.query.groupby;
 
-import com.google.common.collect.ImmutableMap;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.druid.java.util.common.Intervals;
 import org.apache.druid.java.util.common.granularity.PeriodGranularity;
+import org.apache.druid.java.util.emitter.core.Emitter;
+import org.apache.druid.java.util.emitter.core.Event;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.query.CachingEmitter;
-import org.apache.druid.query.DefaultQueryMetricsTest;
 import org.apache.druid.query.DruidMetrics;
+import org.apache.druid.query.Query;
+import org.apache.druid.query.QueryMetrics;
 import org.apache.druid.query.QueryRunnerTestHelper;
 import org.apache.druid.query.aggregation.LongSumAggregatorFactory;
 import org.apache.druid.query.dimension.ExtractionDimensionSpec;
@@ -36,74 +42,125 @@ import org.joda.time.Interval;
 import org.joda.time.Period;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.Mockito;
 
-import java.util.Collections;
-import java.util.Map;
+import com.google.common.collect.ImmutableMap;
 
-public class DefaultGroupByQueryMetricsTest
-{
+public class DefaultGroupByQueryMetricsTest {
 
-  /**
-   * Tests that passed a query {@link DefaultGroupByQueryMetrics} produces events with a certain set of dimensions,
-   * no more, no less.
-   */
-  @Test
-  public void testDefaultGroupByQueryMetricsQuery()
-  {
-    CachingEmitter cachingEmitter = new CachingEmitter();
-    ServiceEmitter serviceEmitter = new ServiceEmitter("", "", cachingEmitter);
-    DefaultGroupByQueryMetrics queryMetrics = new DefaultGroupByQueryMetrics();
-    GroupByQuery.Builder builder = GroupByQuery
-        .builder()
-        .setDataSource(QueryRunnerTestHelper.DATA_SOURCE)
-        .setInterval("2011-04-02/2011-04-04").setDimensions(new ExtractionDimensionSpec(
-            "quality",
-            "alias",
-            new LookupExtractionFn(
-                new MapLookupExtractor(ImmutableMap.of("mezzanine", "mezzanine0"), false),
-                false,
-                null,
-                true,
-                false
-            )
-        )).setAggregatorSpecs(QueryRunnerTestHelper.ROWS_COUNT, new LongSumAggregatorFactory("idx", "index"))
-        .setGranularity(new PeriodGranularity(new Period("P1M"), null, null))
-        .setDimFilter(new SelectorDimFilter("quality", "mezzanine", null))
-        .setContext(ImmutableMap.of("bySegment", true));
-    GroupByQuery query = builder.build();
-    queryMetrics.query(query);
+	/**
+	 * Tests that passed a query {@link DefaultGroupByQueryMetrics} produces
+	 * events with a certain set of dimensions, no more, no less.
+	 */
+	@Test
+	public void testDefaultGroupByQueryMetricsQuery() {
+		CachingEmitter cachingEmitter = new CachingEmitter();
+		ServiceEmitter serviceEmitter = new ServiceEmitter("", "", cachingEmitter);
+		DefaultGroupByQueryMetrics queryMetrics = new DefaultGroupByQueryMetrics();
+		GroupByQuery.Builder builder = GroupByQuery.builder().setDataSource(QueryRunnerTestHelper.DATA_SOURCE)
+				.setInterval("2011-04-02/2011-04-04")
+				.setDimensions(new ExtractionDimensionSpec("quality", "alias",
+						new LookupExtractionFn(
+								new MapLookupExtractor(ImmutableMap.of("mezzanine", "mezzanine0"), false), false, null,
+								true, false)))
+				.setAggregatorSpecs(QueryRunnerTestHelper.ROWS_COUNT, new LongSumAggregatorFactory("idx", "index"))
+				.setGranularity(new PeriodGranularity(new Period("P1M"), null, null))
+				.setDimFilter(new SelectorDimFilter("quality", "mezzanine", null))
+				.setContext(ImmutableMap.of("bySegment", true));
+		GroupByQuery query = builder.build();
+		queryMetrics.query(query);
 
-    queryMetrics.reportQueryTime(0).emit(serviceEmitter);
-    Map<String, Object> actualEvent = cachingEmitter.getLastEmittedEvent().toMap();
-    Assert.assertEquals(15, actualEvent.size());
-    Assert.assertTrue(actualEvent.containsKey("feed"));
-    Assert.assertTrue(actualEvent.containsKey("timestamp"));
-    Assert.assertEquals("", actualEvent.get("host"));
-    Assert.assertEquals("", actualEvent.get("service"));
-    Assert.assertEquals(QueryRunnerTestHelper.DATA_SOURCE, actualEvent.get(DruidMetrics.DATASOURCE));
-    Assert.assertEquals(query.getType(), actualEvent.get(DruidMetrics.TYPE));
-    Interval expectedInterval = Intervals.of("2011-04-02/2011-04-04");
-    Assert.assertEquals(Collections.singletonList(expectedInterval.toString()), actualEvent.get(DruidMetrics.INTERVAL));
-    Assert.assertEquals("true", actualEvent.get("hasFilters"));
-    Assert.assertEquals(expectedInterval.toDuration().toString(), actualEvent.get("duration"));
-    Assert.assertEquals("", actualEvent.get(DruidMetrics.ID));
+		queryMetrics.reportQueryTime(0).emit(serviceEmitter);
+		Map<String, Object> actualEvent = cachingEmitter.getLastEmittedEvent().toMap();
+		Assert.assertEquals(15, actualEvent.size());
+		Assert.assertTrue(actualEvent.containsKey("feed"));
+		Assert.assertTrue(actualEvent.containsKey("timestamp"));
+		Assert.assertEquals("", actualEvent.get("host"));
+		Assert.assertEquals("", actualEvent.get("service"));
+		Assert.assertEquals(QueryRunnerTestHelper.DATA_SOURCE, actualEvent.get(DruidMetrics.DATASOURCE));
+		Assert.assertEquals(query.getType(), actualEvent.get(DruidMetrics.TYPE));
+		Interval expectedInterval = Intervals.of("2011-04-02/2011-04-04");
+		Assert.assertEquals(Collections.singletonList(expectedInterval.toString()),
+				actualEvent.get(DruidMetrics.INTERVAL));
+		Assert.assertEquals("true", actualEvent.get("hasFilters"));
+		Assert.assertEquals(expectedInterval.toDuration().toString(), actualEvent.get("duration"));
+		Assert.assertEquals("", actualEvent.get(DruidMetrics.ID));
 
-    // GroupBy-specific dimensions
-    Assert.assertEquals("1", actualEvent.get("numDimensions"));
-    Assert.assertEquals("2", actualEvent.get("numMetrics"));
-    Assert.assertEquals("0", actualEvent.get("numComplexMetrics"));
+		// GroupBy-specific dimensions
+		Assert.assertEquals("1", actualEvent.get("numDimensions"));
+		Assert.assertEquals("2", actualEvent.get("numMetrics"));
+		Assert.assertEquals("0", actualEvent.get("numComplexMetrics"));
 
-    // Metric
-    Assert.assertEquals("query/time", actualEvent.get("metric"));
-    Assert.assertEquals(0L, actualEvent.get("value"));
-  }
+		// Metric
+		Assert.assertEquals("query/time", actualEvent.get("metric"));
+		Assert.assertEquals(0L, actualEvent.get("value"));
+	}
 
-  @Test
-  public void testDefaultGroupByQueryMetricsMetricNamesAndUnits()
-  {
-    CachingEmitter cachingEmitter = new CachingEmitter();
-    ServiceEmitter serviceEmitter = new ServiceEmitter("", "", cachingEmitter);
-    DefaultGroupByQueryMetrics queryMetrics = new DefaultGroupByQueryMetrics();
-    DefaultQueryMetricsTest.testQueryMetricsDefaultMetricNamesAndUnits(cachingEmitter, serviceEmitter, queryMetrics);
-  }
+	@Test
+	public void testDefaultGroupByQueryMetricsMetricNamesAndUnits() {
+		// CachingEmitter cachingEmitter = new CachingEmitter();
+		Emitter cachingEmitter = Mockito.mock(Emitter.class);
+		Map<String, Object> fieldMap = new HashMap<>();
+		fieldMap.put("lastEmittedEvent", null);
+		Mockito.doAnswer(invo -> {
+			fieldMap.put("lastEmittedEvent", invo.getArgument(0));
+			return null;
+		}).when(cachingEmitter).emit(Mockito.any());
+		ServiceEmitter serviceEmitter = new ServiceEmitter("", "", cachingEmitter);
+		DefaultGroupByQueryMetrics queryMetrics = new DefaultGroupByQueryMetrics();
+		testQueryMetricsDefaultMetricNamesAndUnits(cachingEmitter, fieldMap, serviceEmitter, queryMetrics);
+	}
+
+	public static void testQueryMetricsDefaultMetricNamesAndUnits(Emitter cachingEmitter,
+			Map<String, Object> chacheFields, ServiceEmitter serviceEmitter,
+			QueryMetrics<? extends Query<?>> queryMetrics) {
+		queryMetrics.reportQueryTime(1000001).emit(serviceEmitter);
+		Map<String, Object> actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/time", actualEvent.get("metric"));
+		// query/time and most metrics below are measured in milliseconds by
+		// default
+		Assert.assertEquals(1L, actualEvent.get("value"));
+
+		queryMetrics.reportWaitTime(2000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/wait/time", actualEvent.get("metric"));
+		Assert.assertEquals(2L, actualEvent.get("value"));
+
+		queryMetrics.reportSegmentTime(3000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/segment/time", actualEvent.get("metric"));
+		Assert.assertEquals(3L, actualEvent.get("value"));
+
+		queryMetrics.reportSegmentAndCacheTime(4000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/segmentAndCache/time", actualEvent.get("metric"));
+		Assert.assertEquals(4L, actualEvent.get("value"));
+
+		queryMetrics.reportCpuTime(6000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/cpu/time", actualEvent.get("metric"));
+		// CPU time is measured in microseconds by default
+		Assert.assertEquals(6000L, actualEvent.get("value"));
+
+		queryMetrics.reportNodeTimeToFirstByte(7000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/node/ttfb", actualEvent.get("metric"));
+		Assert.assertEquals(7L, actualEvent.get("value"));
+
+		queryMetrics.reportNodeTime(8000001).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/node/time", actualEvent.get("metric"));
+		Assert.assertEquals(8L, actualEvent.get("value"));
+
+		queryMetrics.reportQueryBytes(9).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/bytes", actualEvent.get("metric"));
+		Assert.assertEquals(9L, actualEvent.get("value"));
+
+		queryMetrics.reportNodeBytes(10).emit(serviceEmitter);
+		actualEvent = ((Event) chacheFields.get("lastEmittedEvent")).toMap();
+		Assert.assertEquals("query/node/bytes", actualEvent.get("metric"));
+		Assert.assertEquals(10L, actualEvent.get("value"));
+	}
+
 }

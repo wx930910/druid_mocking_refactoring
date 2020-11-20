@@ -19,9 +19,14 @@
 
 package org.apache.druid.benchmark;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.base.Predicate;
-import com.google.common.collect.ImmutableList;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.druid.common.config.NullHandling;
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.jackson.DefaultObjectMapper;
@@ -87,510 +92,391 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Objects;
-import java.util.concurrent.TimeUnit;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Predicate;
+import com.google.common.collect.ImmutableList;
 
 @State(Scope.Benchmark)
 @Fork(value = 1)
 @Warmup(iterations = 10)
 @Measurement(iterations = 25)
-public class FilterPartitionBenchmark
-{
-  static {
-    NullHandling.initializeForTests();
-  }
+public class FilterPartitionBenchmark {
+	static {
+		NullHandling.initializeForTests();
+	}
 
-  @Param({"750000"})
-  private int rowsPerSegment;
+	@Param({ "750000" })
+	private int rowsPerSegment;
 
-  @Param({"basic"})
-  private String schema;
+	@Param({ "basic" })
+	private String schema;
 
-  private static final Logger log = new Logger(FilterPartitionBenchmark.class);
-  private static final int RNG_SEED = 9999;
-  private static final IndexMergerV9 INDEX_MERGER_V9;
-  private static final IndexIO INDEX_IO;
-  public static final ObjectMapper JSON_MAPPER;
-  private IncrementalIndex incIndex;
-  private QueryableIndex qIndex;
-  private File indexFile;
-  private File tmpDir;
+	private static final Logger log = new Logger(FilterPartitionBenchmark.class);
+	private static final int RNG_SEED = 9999;
+	private static final IndexMergerV9 INDEX_MERGER_V9;
+	private static final IndexIO INDEX_IO;
+	public static final ObjectMapper JSON_MAPPER;
+	private IncrementalIndex incIndex;
+	private QueryableIndex qIndex;
+	private File indexFile;
+	private File tmpDir;
 
-  private Filter timeFilterNone;
-  private Filter timeFilterHalf;
-  private Filter timeFilterAll;
+	private Filter timeFilterNone;
+	private Filter timeFilterHalf;
+	private Filter timeFilterAll;
 
-  private GeneratorSchemaInfo schemaInfo;
+	private GeneratorSchemaInfo schemaInfo;
 
-  private static String JS_FN = "function(str) { return 'super-' + str; }";
-  private static ExtractionFn JS_EXTRACTION_FN = new JavaScriptExtractionFn(JS_FN, false, JavaScriptConfig.getEnabledInstance());
+	private static String JS_FN = "function(str) { return 'super-' + str; }";
+	private static ExtractionFn JS_EXTRACTION_FN = new JavaScriptExtractionFn(JS_FN, false,
+			JavaScriptConfig.getEnabledInstance());
 
-  static {
-    JSON_MAPPER = new DefaultObjectMapper();
-    INDEX_IO = new IndexIO(
-        JSON_MAPPER,
-        new ColumnConfig()
-        {
-          @Override
-          public int columnCacheSizeBytes()
-          {
-            return 0;
-          }
-        }
-    );
-    INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance());
-  }
+	static {
+		JSON_MAPPER = new DefaultObjectMapper();
+		INDEX_IO = new IndexIO(JSON_MAPPER, new ColumnConfig() {
+			@Override
+			public int columnCacheSizeBytes() {
+				return 0;
+			}
+		});
+		INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO,
+				OffHeapMemorySegmentWriteOutMediumFactory.instance());
+	}
 
-  @Setup
-  public void setup() throws IOException
-  {
-    log.info("SETUP CALLED AT " + System.currentTimeMillis());
+	@Setup
+	public void setup() throws IOException {
+		log.info("SETUP CALLED AT " + System.currentTimeMillis());
 
-    ComplexMetrics.registerSerde("hyperUnique", new HyperUniquesSerde());
+		ComplexMetrics.registerSerde("hyperUnique", new HyperUniquesSerde());
 
-    schemaInfo = GeneratorBasicSchemas.SCHEMA_MAP.get(schema);
+		schemaInfo = GeneratorBasicSchemas.SCHEMA_MAP.get(schema);
 
-    DataGenerator gen = new DataGenerator(
-        schemaInfo.getColumnSchemas(),
-        RNG_SEED,
-        schemaInfo.getDataInterval(),
-        rowsPerSegment
-    );
+		DataGenerator gen = new DataGenerator(schemaInfo.getColumnSchemas(), RNG_SEED, schemaInfo.getDataInterval(),
+				rowsPerSegment);
 
-    incIndex = makeIncIndex();
+		incIndex = makeIncIndex();
 
-    for (int j = 0; j < rowsPerSegment; j++) {
-      InputRow row = gen.nextRow();
-      if (j % 10000 == 0) {
-        log.info(j + " rows generated.");
-      }
-      incIndex.add(row);
-    }
+		for (int j = 0; j < rowsPerSegment; j++) {
+			InputRow row = gen.nextRow();
+			if (j % 10000 == 0) {
+				log.info(j + " rows generated.");
+			}
+			incIndex.add(row);
+		}
 
-    tmpDir = FileUtils.createTempDir();
-    log.info("Using temp dir: " + tmpDir.getAbsolutePath());
+		tmpDir = FileUtils.createTempDir();
+		log.info("Using temp dir: " + tmpDir.getAbsolutePath());
 
-    indexFile = INDEX_MERGER_V9.persist(
-        incIndex,
-        tmpDir,
-        new IndexSpec(),
-        null
-    );
-    qIndex = INDEX_IO.loadIndex(indexFile);
+		indexFile = INDEX_MERGER_V9.persist(incIndex, tmpDir, new IndexSpec(), null);
+		qIndex = INDEX_IO.loadIndex(indexFile);
 
-    Interval interval = schemaInfo.getDataInterval();
-    timeFilterNone = new BoundFilter(new BoundDimFilter(
-        ColumnHolder.TIME_COLUMN_NAME,
-        String.valueOf(Long.MAX_VALUE),
-        String.valueOf(Long.MAX_VALUE),
-        true,
-        true,
-        null,
-        null,
-        StringComparators.ALPHANUMERIC
-    ));
+		Interval interval = schemaInfo.getDataInterval();
+		timeFilterNone = new BoundFilter(
+				new BoundDimFilter(ColumnHolder.TIME_COLUMN_NAME, String.valueOf(Long.MAX_VALUE),
+						String.valueOf(Long.MAX_VALUE), true, true, null, null, StringComparators.ALPHANUMERIC));
 
-    long halfEnd = (interval.getEndMillis() + interval.getStartMillis()) / 2;
-    timeFilterHalf = new BoundFilter(new BoundDimFilter(
-        ColumnHolder.TIME_COLUMN_NAME,
-        String.valueOf(interval.getStartMillis()),
-        String.valueOf(halfEnd),
-        true,
-        true,
-        null,
-        null,
-        StringComparators.ALPHANUMERIC
-    ));
+		long halfEnd = (interval.getEndMillis() + interval.getStartMillis()) / 2;
+		timeFilterHalf = new BoundFilter(
+				new BoundDimFilter(ColumnHolder.TIME_COLUMN_NAME, String.valueOf(interval.getStartMillis()),
+						String.valueOf(halfEnd), true, true, null, null, StringComparators.ALPHANUMERIC));
 
-    timeFilterAll = new BoundFilter(new BoundDimFilter(
-        ColumnHolder.TIME_COLUMN_NAME,
-        String.valueOf(interval.getStartMillis()),
-        String.valueOf(interval.getEndMillis()),
-        true,
-        true,
-        null,
-        null,
-        StringComparators.ALPHANUMERIC
-    ));
-  }
+		timeFilterAll = new BoundFilter(new BoundDimFilter(ColumnHolder.TIME_COLUMN_NAME,
+				String.valueOf(interval.getStartMillis()), String.valueOf(interval.getEndMillis()), true, true, null,
+				null, StringComparators.ALPHANUMERIC));
+	}
 
-  @TearDown
-  public void tearDown() throws IOException
-  {
-    FileUtils.deleteDirectory(tmpDir);
-  }
+	@TearDown
+	public void tearDown() throws IOException {
+		FileUtils.deleteDirectory(tmpDir);
+	}
 
-  private IncrementalIndex makeIncIndex()
-  {
-    return new IncrementalIndex.Builder()
-        .setSimpleTestingIndexSchema(schemaInfo.getAggsArray())
-        .setReportParseExceptions(false)
-        .setMaxRowCount(rowsPerSegment)
-        .buildOnheap();
-  }
+	private IncrementalIndex makeIncIndex() {
+		return new IncrementalIndex.Builder().setSimpleTestingIndexSchema(schemaInfo.getAggsArray())
+				.setReportParseExceptions(false).setMaxRowCount(rowsPerSegment).buildOnheap();
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void stringRead(Blackhole blackhole)
-  {
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, null);
-    readCursors(cursors, blackhole);
-  }
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void stringRead(Blackhole blackhole) {
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, null);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void longRead(Blackhole blackhole)
-  {
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, null);
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void longRead(Blackhole blackhole) {
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, null);
 
-    readCursorsLong(cursors, blackhole);
-  }
+		readCursorsLong(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void timeFilterNone(Blackhole blackhole)
-  {
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, timeFilterNone);
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void timeFilterNone(Blackhole blackhole) {
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, timeFilterNone);
 
-    readCursorsLong(cursors, blackhole);
-  }
+		readCursorsLong(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void timeFilterHalf(Blackhole blackhole)
-  {
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, timeFilterHalf);
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void timeFilterHalf(Blackhole blackhole) {
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, timeFilterHalf);
 
-    readCursorsLong(cursors, blackhole);
-  }
+		readCursorsLong(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void timeFilterAll(Blackhole blackhole)
-  {
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, timeFilterAll);
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void timeFilterAll(Blackhole blackhole) {
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, timeFilterAll);
 
-    readCursorsLong(cursors, blackhole);
-  }
+		readCursorsLong(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readWithPreFilter(Blackhole blackhole)
-  {
-    Filter filter = new SelectorFilter("dimSequential", "199");
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readWithPreFilter(Blackhole blackhole) {
+		Filter filter = new SelectorFilter("dimSequential", "199");
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, filter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, filter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readWithPostFilter(Blackhole blackhole)
-  {
-    Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readWithPostFilter(Blackhole blackhole) {
+		Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, filter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, filter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readWithExFnPreFilter(Blackhole blackhole)
-  {
-    Filter filter = new SelectorDimFilter("dimSequential", "super-199", JS_EXTRACTION_FN).toFilter();
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readWithExFnPreFilter(Blackhole blackhole) {
+		Filter filter = new SelectorDimFilter("dimSequential", "super-199", JS_EXTRACTION_FN).toFilter();
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, filter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, filter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readWithExFnPostFilter(Blackhole blackhole)
-  {
-    Filter filter = new NoBitmapSelectorDimFilter("dimSequential", "super-199", JS_EXTRACTION_FN).toFilter();
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readWithExFnPostFilter(Blackhole blackhole) {
+		Filter filter = new NoBitmapSelectorDimFilter("dimSequential", "super-199", JS_EXTRACTION_FN).toFilter();
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, filter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, filter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readAndFilter(Blackhole blackhole)
-  {
-    Filter andFilter = new AndFilter(
-        ImmutableList.of(
-            new SelectorFilter("dimUniform", "199"),
-            new NoBitmapSelectorDimFilter("dimUniform", "super-199", JS_EXTRACTION_FN).toFilter()
-        )
-    );
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readAndFilter(Blackhole blackhole) {
+		Filter andFilter = new AndFilter(ImmutableList.of(new SelectorFilter("dimUniform", "199"),
+				new NoBitmapSelectorDimFilter("dimUniform", "super-199", JS_EXTRACTION_FN).toFilter()));
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, andFilter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, andFilter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readOrFilter(Blackhole blackhole)
-  {
-    Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
-    Filter filter2 = new AndFilter(Arrays.asList(new SelectorFilter("dimMultivalEnumerated2", "Corundum"), new NoBitmapSelectorFilter("dimMultivalEnumerated", "Bar")));
-    Filter orFilter = new OrFilter(Arrays.asList(filter, filter2));
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readOrFilter(Blackhole blackhole) {
+		Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
+		Filter filter2 = new AndFilter(Arrays.asList(new SelectorFilter("dimMultivalEnumerated2", "Corundum"),
+				new NoBitmapSelectorFilter("dimMultivalEnumerated", "Bar")));
+		Filter orFilter = new OrFilter(Arrays.asList(filter, filter2));
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, orFilter);
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, orFilter);
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readOrFilterCNF(Blackhole blackhole)
-  {
-    Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
-    Filter filter2 = new AndFilter(Arrays.asList(new SelectorFilter("dimMultivalEnumerated2", "Corundum"), new NoBitmapSelectorFilter("dimMultivalEnumerated", "Bar")));
-    Filter orFilter = new OrFilter(Arrays.asList(filter, filter2));
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readOrFilterCNF(Blackhole blackhole) {
+		Filter filter = new NoBitmapSelectorFilter("dimSequential", "199");
+		Filter filter2 = new AndFilter(Arrays.asList(new SelectorFilter("dimMultivalEnumerated2", "Corundum"),
+				new NoBitmapSelectorFilter("dimMultivalEnumerated", "Bar")));
+		Filter orFilter = new OrFilter(Arrays.asList(filter, filter2));
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, Filters.toCnf(orFilter));
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, Filters.toCnf(orFilter));
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readComplexOrFilter(Blackhole blackhole)
-  {
-    DimFilter dimFilter1 = new OrDimFilter(Arrays.asList(
-        new SelectorDimFilter("dimSequential", "199", null),
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Corundum", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "Bar", null)
-        )
-        ))
-    );
-    DimFilter dimFilter2 = new OrDimFilter(Arrays.asList(
-        new SelectorDimFilter("dimSequential", "299", null),
-        new SelectorDimFilter("dimSequential", "399", null),
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Xylophone", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "Foo", null)
-        )
-        ))
-    );
-    DimFilter dimFilter3 = new OrDimFilter(Arrays.asList(
-        dimFilter1,
-        dimFilter2,
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Orange", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "World", null)
-        )
-        ))
-    );
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readComplexOrFilter(Blackhole blackhole) {
+		DimFilter dimFilter1 = new OrDimFilter(Arrays.asList(new SelectorDimFilter("dimSequential", "199", null),
+				new AndDimFilter(
+						Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Corundum", null),
+								new SelectorDimFilter("dimMultivalEnumerated", "Bar", null)))));
+		DimFilter dimFilter2 = new OrDimFilter(Arrays.asList(new SelectorDimFilter("dimSequential", "299", null),
+				new SelectorDimFilter("dimSequential", "399", null),
+				new AndDimFilter(
+						Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Xylophone", null),
+								new SelectorDimFilter("dimMultivalEnumerated", "Foo", null)))));
+		DimFilter dimFilter3 = new OrDimFilter(Arrays.asList(dimFilter1, dimFilter2,
+				new AndDimFilter(Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Orange", null),
+						new SelectorDimFilter("dimMultivalEnumerated", "World", null)))));
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, dimFilter3.toFilter());
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, dimFilter3.toFilter());
+		readCursors(cursors, blackhole);
+	}
 
-  @Benchmark
-  @BenchmarkMode(Mode.AverageTime)
-  @OutputTimeUnit(TimeUnit.MICROSECONDS)
-  public void readComplexOrFilterCNF(Blackhole blackhole)
-  {
-    DimFilter dimFilter1 = new OrDimFilter(Arrays.asList(
-        new SelectorDimFilter("dimSequential", "199", null),
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Corundum", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "Bar", null)
-        )
-        ))
-    );
-    DimFilter dimFilter2 = new OrDimFilter(Arrays.asList(
-        new SelectorDimFilter("dimSequential", "299", null),
-        new SelectorDimFilter("dimSequential", "399", null),
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Xylophone", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "Foo", null)
-        )
-        ))
-    );
-    DimFilter dimFilter3 = new OrDimFilter(Arrays.asList(
-        dimFilter1,
-        dimFilter2,
-        new AndDimFilter(Arrays.asList(
-            new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Orange", null),
-            new SelectorDimFilter("dimMultivalEnumerated", "World", null)
-        )
-        ))
-    );
+	@Benchmark
+	@BenchmarkMode(Mode.AverageTime)
+	@OutputTimeUnit(TimeUnit.MICROSECONDS)
+	public void readComplexOrFilterCNF(Blackhole blackhole) {
+		DimFilter dimFilter1 = new OrDimFilter(Arrays.asList(new SelectorDimFilter("dimSequential", "199", null),
+				new AndDimFilter(
+						Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Corundum", null),
+								new SelectorDimFilter("dimMultivalEnumerated", "Bar", null)))));
+		DimFilter dimFilter2 = new OrDimFilter(Arrays.asList(new SelectorDimFilter("dimSequential", "299", null),
+				new SelectorDimFilter("dimSequential", "399", null),
+				new AndDimFilter(
+						Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Xylophone", null),
+								new SelectorDimFilter("dimMultivalEnumerated", "Foo", null)))));
+		DimFilter dimFilter3 = new OrDimFilter(Arrays.asList(dimFilter1, dimFilter2,
+				new AndDimFilter(Arrays.asList(new NoBitmapSelectorDimFilter("dimMultivalEnumerated2", "Orange", null),
+						new SelectorDimFilter("dimMultivalEnumerated", "World", null)))));
 
-    StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
-    Sequence<Cursor> cursors = makeCursors(sa, Filters.toCnf(dimFilter3.toFilter()));
-    readCursors(cursors, blackhole);
-  }
+		StorageAdapter sa = new QueryableIndexStorageAdapter(qIndex);
+		Sequence<Cursor> cursors = makeCursors(sa, Filters.toCnf(dimFilter3.toFilter()));
+		readCursors(cursors, blackhole);
+	}
 
-  private Sequence<Cursor> makeCursors(StorageAdapter sa, Filter filter)
-  {
-    return sa.makeCursors(filter, schemaInfo.getDataInterval(), VirtualColumns.EMPTY, Granularities.ALL, false, null);
-  }
+	private Sequence<Cursor> makeCursors(StorageAdapter sa, Filter filter) {
+		return sa.makeCursors(filter, schemaInfo.getDataInterval(), VirtualColumns.EMPTY, Granularities.ALL, false,
+				null);
+	}
 
-  private void readCursors(Sequence<Cursor> cursors, Blackhole blackhole)
-  {
-    final Sequence<Void> voids = Sequences.map(
-        cursors,
-        input -> {
-          List<DimensionSelector> selectors = new ArrayList<>();
-          selectors.add(
-              input.getColumnSelectorFactory().makeDimensionSelector(new DefaultDimensionSpec("dimSequential", null))
-          );
-          while (!input.isDone()) {
-            for (DimensionSelector selector : selectors) {
-              IndexedInts row = selector.getRow();
-              blackhole.consume(selector.lookupName(row.get(0)));
-            }
-            input.advance();
-          }
-          return null;
-        }
-    );
+	private void readCursors(Sequence<Cursor> cursors, Blackhole blackhole) {
+		final Sequence<Void> voids = Sequences.map(cursors, input -> {
+			List<DimensionSelector> selectors = new ArrayList<>();
+			selectors.add(input.getColumnSelectorFactory()
+					.makeDimensionSelector(new DefaultDimensionSpec("dimSequential", null)));
+			while (!input.isDone()) {
+				for (DimensionSelector selector : selectors) {
+					IndexedInts row = selector.getRow();
+					blackhole.consume(selector.lookupName(row.get(0)));
+				}
+				input.advance();
+			}
+			return null;
+		});
 
-    blackhole.consume(voids.toList());
-  }
+		blackhole.consume(voids.toList());
+	}
 
-  private void readCursorsLong(Sequence<Cursor> cursors, final Blackhole blackhole)
-  {
-    final Sequence<Void> voids = Sequences.map(
-        cursors,
-        input -> {
-          BaseLongColumnValueSelector selector = input.getColumnSelectorFactory()
-                                                      .makeColumnValueSelector("sumLongSequential");
-          while (!input.isDone()) {
-            long rowval = selector.getLong();
-            blackhole.consume(rowval);
-            input.advance();
-          }
-          return null;
-        }
-    );
+	private void readCursorsLong(Sequence<Cursor> cursors, final Blackhole blackhole) {
+		final Sequence<Void> voids = Sequences.map(cursors, input -> {
+			BaseLongColumnValueSelector selector = input.getColumnSelectorFactory()
+					.makeColumnValueSelector("sumLongSequential");
+			while (!input.isDone()) {
+				long rowval = selector.getLong();
+				blackhole.consume(rowval);
+				input.advance();
+			}
+			return null;
+		});
 
-    blackhole.consume(voids.toList());
-  }
+		blackhole.consume(voids.toList());
+	}
 
-  private static class NoBitmapSelectorFilter extends SelectorFilter
-  {
-    public NoBitmapSelectorFilter(
-        String dimension,
-        String value
-    )
-    {
-      super(dimension, value);
-    }
+	private static class NoBitmapSelectorFilter extends SelectorFilter {
+		public NoBitmapSelectorFilter(String dimension, String value) {
+			super(dimension, value);
+		}
 
-    @Override
-    public boolean supportsBitmapIndex(BitmapIndexSelector selector)
-    {
-      return false;
-    }
-  }
+		@Override
+		public boolean supportsBitmapIndex(BitmapIndexSelector selector) {
+			return false;
+		}
+	}
 
-  private static class NoBitmapDimensionPredicateFilter extends DimensionPredicateFilter
-  {
-    public NoBitmapDimensionPredicateFilter(
-        final String dimension,
-        final DruidPredicateFactory predicateFactory,
-        final ExtractionFn extractionFn
-    )
-    {
-      super(dimension, predicateFactory, extractionFn);
-    }
+	private static class NoBitmapDimensionPredicateFilter extends DimensionPredicateFilter {
+		public NoBitmapDimensionPredicateFilter(final String dimension, final DruidPredicateFactory predicateFactory,
+				final ExtractionFn extractionFn) {
+			super(dimension, predicateFactory, extractionFn);
+		}
 
-    @Override
-    public boolean supportsBitmapIndex(BitmapIndexSelector selector)
-    {
-      return false;
-    }
-  }
+		@Override
+		public boolean supportsBitmapIndex(BitmapIndexSelector selector) {
+			return false;
+		}
+	}
 
-  private static class NoBitmapSelectorDimFilter extends SelectorDimFilter
-  {
-    NoBitmapSelectorDimFilter(String dimension, String value, ExtractionFn extractionFn)
-    {
-      super(dimension, value, extractionFn);
-    }
+	private static class NoBitmapSelectorDimFilter extends SelectorDimFilter {
+		NoBitmapSelectorDimFilter(String dimension, String value, ExtractionFn extractionFn) {
+			super(dimension, value, extractionFn);
+		}
 
-    @Override
-    public Filter toFilter()
-    {
-      ExtractionFn extractionFn = getExtractionFn();
-      String dimension = getDimension();
-      final String value = getValue();
-      if (extractionFn == null) {
-        return new NoBitmapSelectorFilter(dimension, value);
-      } else {
-        final String valueOrNull = NullHandling.emptyToNullIfNeeded(value);
+		@Override
+		public Filter toFilter() {
+			ExtractionFn extractionFn = getExtractionFn();
+			String dimension = getDimension();
+			final String value = getValue();
+			if (extractionFn == null) {
+				return new NoBitmapSelectorFilter(dimension, value);
+			} else {
+				final String valueOrNull = NullHandling.emptyToNullIfNeeded(value);
 
-        final DruidPredicateFactory predicateFactory = new DruidPredicateFactory()
-        {
-          @Override
-          public Predicate<String> makeStringPredicate()
-          {
-            return new Predicate<String>()
-            {
-              @Override
-              public boolean apply(String input)
-              {
-                return Objects.equals(valueOrNull, input);
-              }
-            };
-          }
+				final DruidPredicateFactory predicateFactory = new DruidPredicateFactory() {
+					@Override
+					public Predicate<String> makeStringPredicate() {
+						return new Predicate<String>() {
+							@Override
+							public boolean apply(String input) {
+								return Objects.equals(valueOrNull, input);
+							}
+						};
+					}
 
-          @Override
-          public DruidLongPredicate makeLongPredicate()
-          {
-            return DruidLongPredicate.ALWAYS_FALSE;
-          }
+					@Override
+					public DruidLongPredicate makeLongPredicate() {
+						return DruidLongPredicate.ALWAYS_FALSE;
+					}
 
-          @Override
-          public DruidFloatPredicate makeFloatPredicate()
-          {
-            return DruidFloatPredicate.ALWAYS_FALSE;
-          }
+					@Override
+					public DruidFloatPredicate makeFloatPredicate() {
+						return DruidFloatPredicate.ALWAYS_FALSE;
+					}
 
-          @Override
-          public DruidDoublePredicate makeDoublePredicate()
-          {
-            return DruidDoublePredicate.ALWAYS_FALSE;
-          }
-        };
+					@Override
+					public DruidDoublePredicate makeDoublePredicate() {
+						return DruidDoublePredicate.ALWAYS_FALSE;
+					}
+				};
 
-        return new NoBitmapDimensionPredicateFilter(dimension, predicateFactory, extractionFn);
-      }
-    }
-  }
+				return new NoBitmapDimensionPredicateFilter(dimension, predicateFactory, extractionFn);
+			}
+		}
+	}
 }

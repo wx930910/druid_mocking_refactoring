@@ -19,8 +19,10 @@
 
 package org.apache.druid.segment.serde;
 
-import com.google.common.hash.HashFunction;
-import it.unimi.dsi.fastutil.bytes.ByteArrays;
+import java.nio.ByteBuffer;
+import java.util.Comparator;
+import java.util.List;
+
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.hll.HyperLogLogCollector;
 import org.apache.druid.java.util.common.StringUtils;
@@ -30,126 +32,104 @@ import org.apache.druid.segment.data.GenericIndexed;
 import org.apache.druid.segment.data.ObjectStrategy;
 import org.apache.druid.segment.writeout.SegmentWriteOutMedium;
 
-import java.nio.ByteBuffer;
-import java.util.Comparator;
-import java.util.List;
+import com.google.common.hash.HashFunction;
 
-public class HyperUniquesSerdeForTest extends ComplexMetricSerde
-{
-  private static Comparator<HyperLogLogCollector> comparator =
-      Comparator.nullsFirst(Comparator.comparing(HyperLogLogCollector::toByteBuffer));
+import it.unimi.dsi.fastutil.bytes.ByteArrays;
 
-  private final HashFunction hashFn;
+public class HyperUniquesSerdeForTest extends ComplexMetricSerde {
+	private static Comparator<HyperLogLogCollector> comparator = Comparator
+			.nullsFirst(Comparator.comparing(HyperLogLogCollector::toByteBuffer));
 
-  public HyperUniquesSerdeForTest(
-      HashFunction hashFn
-  )
-  {
-    this.hashFn = hashFn;
-  }
+	private final HashFunction hashFn;
 
-  @Override
-  public String getTypeName()
-  {
-    return "hyperUnique";
-  }
+	public HyperUniquesSerdeForTest(HashFunction hashFn) {
+		this.hashFn = hashFn;
+	}
 
-  @Override
-  public ComplexMetricExtractor getExtractor()
-  {
-    return new ComplexMetricExtractor()
-    {
-      @Override
-      public Class<HyperLogLogCollector> extractedClass()
-      {
-        return HyperLogLogCollector.class;
-      }
+	@Override
+	public String getTypeName() {
+		return "hyperUnique";
+	}
 
-      @Override
-      public HyperLogLogCollector extractValue(InputRow inputRow, String metricName)
-      {
-        Object rawValue = inputRow.getRaw(metricName);
+	@Override
+	public ComplexMetricExtractor getExtractor() {
+		return new ComplexMetricExtractor() {
+			@Override
+			public Class<HyperLogLogCollector> extractedClass() {
+				return HyperLogLogCollector.class;
+			}
 
-        if (rawValue instanceof HyperLogLogCollector) {
-          return (HyperLogLogCollector) rawValue;
-        } else {
-          HyperLogLogCollector collector = HyperLogLogCollector.makeLatestCollector();
+			@Override
+			public HyperLogLogCollector extractValue(InputRow inputRow, String metricName) {
+				Object rawValue = inputRow.getRaw(metricName);
 
-          List<String> dimValues = inputRow.getDimension(metricName);
-          if (dimValues == null) {
-            return collector;
-          }
+				if (rawValue instanceof HyperLogLogCollector) {
+					return (HyperLogLogCollector) rawValue;
+				} else {
+					HyperLogLogCollector collector = HyperLogLogCollector.makeLatestCollector();
 
-          for (String dimensionValue : dimValues) {
-            collector.add(
-                hashFn.hashBytes(StringUtils.toUtf8(dimensionValue)).asBytes());
-          }
-          return collector;
-        }
-      }
-    };
-  }
+					List<String> dimValues = inputRow.getDimension(metricName);
+					if (dimValues == null) {
+						return collector;
+					}
 
-  @Override
-  public void deserializeColumn(ByteBuffer byteBuffer, ColumnBuilder columnBuilder)
-  {
-    final GenericIndexed column;
-    if (columnBuilder.getFileMapper() == null) {
-      column = GenericIndexed.read(byteBuffer, getObjectStrategy());
-    } else {
-      column = GenericIndexed.read(byteBuffer, getObjectStrategy(), columnBuilder.getFileMapper());
-    }
+					for (String dimensionValue : dimValues) {
+						collector.add(hashFn.hashBytes(StringUtils.toUtf8(dimensionValue)).asBytes());
+					}
+					return collector;
+				}
+			}
+		};
+	}
 
-    columnBuilder.setComplexColumnSupplier(new ComplexColumnPartSupplier(getTypeName(), column));
-  }
+	@Override
+	public void deserializeColumn(ByteBuffer byteBuffer, ColumnBuilder columnBuilder) {
+		final GenericIndexed column;
+		if (columnBuilder.getFileMapper() == null) {
+			column = GenericIndexed.read(byteBuffer, getObjectStrategy());
+		} else {
+			column = GenericIndexed.read(byteBuffer, getObjectStrategy(), columnBuilder.getFileMapper());
+		}
 
-  @Override
-  public ObjectStrategy getObjectStrategy()
-  {
-    return new ObjectStrategy<HyperLogLogCollector>()
-    {
-      @Override
-      public Class<? extends HyperLogLogCollector> getClazz()
-      {
-        return HyperLogLogCollector.class;
-      }
+		columnBuilder.setComplexColumnSupplier(new ComplexColumnPartSupplier(getTypeName(), column));
+	}
 
-      @Override
-      public HyperLogLogCollector fromByteBuffer(ByteBuffer buffer, int numBytes)
-      {
-        final ByteBuffer readOnlyBuffer = buffer.asReadOnlyBuffer();
-        readOnlyBuffer.limit(readOnlyBuffer.position() + numBytes);
-        return HyperLogLogCollector.makeCollector(readOnlyBuffer);
-      }
+	@Override
+	public ObjectStrategy getObjectStrategy() {
+		return new ObjectStrategy<HyperLogLogCollector>() {
+			@Override
+			public Class<? extends HyperLogLogCollector> getClazz() {
+				return HyperLogLogCollector.class;
+			}
 
-      @Override
-      public byte[] toBytes(HyperLogLogCollector collector)
-      {
-        if (collector == null) {
-          return ByteArrays.EMPTY_ARRAY;
-        }
-        ByteBuffer val = collector.toByteBuffer();
-        byte[] retVal = new byte[val.remaining()];
-        val.asReadOnlyBuffer().get(retVal);
-        return retVal;
-      }
+			@Override
+			public HyperLogLogCollector fromByteBuffer(ByteBuffer buffer, int numBytes) {
+				final ByteBuffer readOnlyBuffer = buffer.asReadOnlyBuffer();
+				readOnlyBuffer.limit(readOnlyBuffer.position() + numBytes);
+				return HyperLogLogCollector.makeCollector(readOnlyBuffer);
+			}
 
-      @Override
-      public int compare(HyperLogLogCollector o1, HyperLogLogCollector o2)
-      {
-        return comparator.compare(o1, o2);
-      }
-    };
-  }
+			@Override
+			public byte[] toBytes(HyperLogLogCollector collector) {
+				if (collector == null) {
+					return ByteArrays.EMPTY_ARRAY;
+				}
+				ByteBuffer val = collector.toByteBuffer();
+				byte[] retVal = new byte[val.remaining()];
+				val.asReadOnlyBuffer().get(retVal);
+				return retVal;
+			}
 
-  @Override
-  public GenericColumnSerializer getSerializer(SegmentWriteOutMedium segmentWriteOutMedium, String metric)
-  {
-    return LargeColumnSupportedComplexColumnSerializer.createWithColumnSize(
-        segmentWriteOutMedium,
-        metric,
-        this.getObjectStrategy(),
-        Integer.MAX_VALUE
-    );
-  }
+			@Override
+			public int compare(HyperLogLogCollector o1, HyperLogLogCollector o2) {
+				return comparator.compare(o1, o2);
+			}
+		};
+	}
+
+	@Override
+	public GenericColumnSerializer getSerializer(SegmentWriteOutMedium segmentWriteOutMedium, String metric) {
+		return LargeColumnSupportedComplexColumnSerializer.createWithColumnSize(segmentWriteOutMedium, metric,
+				this.getObjectStrategy(), Integer.MAX_VALUE);
+	}
 }

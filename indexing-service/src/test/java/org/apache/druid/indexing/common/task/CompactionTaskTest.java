@@ -289,8 +289,30 @@ public class CompactionTaskTest {
 	@Before
 	public void setup() {
 		final IndexIO testIndexIO = new TestIndexIO(OBJECT_MAPPER, SEGMENT_MAP);
-		toolbox = new TestTaskToolbox(new TestTaskActionClient(new ArrayList<>(SEGMENT_MAP.keySet())), testIndexIO,
-				SEGMENT_MAP);
+		toolbox = Mockito.mock(TaskToolbox.class,
+				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor(null, null,
+						new TestTaskActionClient(new ArrayList<>(SEGMENT_MAP.keySet())), null, null, null, null, null,
+						null, null, null, null, null, NoopJoinableFactory.INSTANCE, null, null, null, null, testIndexIO,
+						null, null, null,
+						new IndexMergerV9(OBJECT_MAPPER, testIndexIO,
+								OffHeapMemorySegmentWriteOutMediumFactory.instance()),
+						null, null, null, null, Mockito.mock(TaskReportFileWriter.class), null));
+		try {
+			Mockito.when(toolbox.fetchSegments(Mockito.anyList())).thenAnswer(invo -> {
+				List<DataSegment> segments = invo.getArgument(0);
+				final Map<DataSegment, File> submap = Maps.newHashMapWithExpectedSize(segments.size());
+				for (DataSegment segment : segments) {
+					final File file = Preconditions.checkNotNull(SEGMENT_MAP.get(segment));
+					submap.put(segment, file);
+				}
+				return submap;
+			});
+		} catch (SegmentLoadingException e) {
+			e.printStackTrace();
+		}
+		// toolbox = new TestTaskToolbox(new TestTaskActionClient(new
+		// ArrayList<>(SEGMENT_MAP.keySet())), testIndexIO,
+		// SEGMENT_MAP);
 		segmentLoaderFactory = new SegmentLoaderFactory(testIndexIO, OBJECT_MAPPER);
 	}
 
@@ -833,11 +855,30 @@ public class CompactionTaskTest {
 	}
 
 	private static ColumnHolder createColumn(DimensionSchema dimensionSchema) {
-		return new TestColumn(IncrementalIndex.TYPE_MAP.get(dimensionSchema.getValueType()));
+		return mockColumnHolder(IncrementalIndex.TYPE_MAP.get(dimensionSchema.getValueType()));
 	}
 
 	private static ColumnHolder createColumn(AggregatorFactory aggregatorFactory) {
-		return new TestColumn(ValueType.fromString(aggregatorFactory.getTypeName()));
+		return mockColumnHolder(ValueType.fromString(aggregatorFactory.getTypeName()));
+	}
+
+	private static ColumnHolder mockColumnHolder(ValueType type) {
+		final ColumnCapabilities columnCapabilities = new ColumnCapabilitiesImpl().setType(type)
+				.setDictionaryEncoded(type == ValueType.STRING) // set a
+				// fake
+				// value to
+				// make
+				// string
+				// columns
+				.setHasBitmapIndexes(type == ValueType.STRING).setHasSpatialIndexes(false).setHasMultipleValues(false);
+		ColumnHolder res = Mockito.mock(ColumnHolder.class);
+		Mockito.when(res.getCapabilities()).thenAnswer(invo -> {
+			return columnCapabilities;
+		});
+		Mockito.when(res.getLength()).thenAnswer(invo -> {
+			return NUM_ROWS_PER_SEGMENT;
+		});
+		return res;
 	}
 
 	private static class TestColumn implements ColumnHolder {

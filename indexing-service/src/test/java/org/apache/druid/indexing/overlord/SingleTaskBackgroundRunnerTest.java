@@ -19,7 +19,13 @@
 
 package org.apache.druid.indexing.overlord;
 
-import com.google.common.util.concurrent.ListenableFuture;
+import java.io.File;
+import java.io.IOException;
+import java.util.Collections;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 import org.apache.druid.indexer.TaskState;
 import org.apache.druid.indexer.TaskStatus;
 import org.apache.druid.indexing.common.SegmentLoaderFactory;
@@ -34,10 +40,11 @@ import org.apache.druid.indexing.common.task.AbstractTask;
 import org.apache.druid.indexing.common.task.NoopTask;
 import org.apache.druid.java.util.emitter.service.ServiceEmitter;
 import org.apache.druid.segment.join.NoopJoinableFactory;
+import org.apache.druid.segment.loading.DataSegmentMover;
 import org.apache.druid.segment.loading.NoopDataSegmentArchiver;
 import org.apache.druid.segment.loading.NoopDataSegmentKiller;
-import org.apache.druid.segment.loading.NoopDataSegmentMover;
 import org.apache.druid.segment.loading.NoopDataSegmentPusher;
+import org.apache.druid.segment.loading.SegmentLoadingException;
 import org.apache.druid.server.DruidNode;
 import org.apache.druid.server.coordination.NoopDataSegmentAnnouncer;
 import org.apache.druid.server.initialization.ServerConfig;
@@ -49,174 +56,137 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
+import org.mockito.Mockito;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.Collections;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import com.google.common.util.concurrent.ListenableFuture;
 
-public class SingleTaskBackgroundRunnerTest
-{
-  @Rule
-  public TemporaryFolder temporaryFolder = new TemporaryFolder();
+public class SingleTaskBackgroundRunnerTest {
+	@Rule
+	public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
-  private SingleTaskBackgroundRunner runner;
+	private SingleTaskBackgroundRunner runner;
 
-  @Before
-  public void setup() throws IOException
-  {
-    final TestUtils utils = new TestUtils();
-    final DruidNode node = new DruidNode("testServer", "testHost", false, 1000, null, true, false);
-    final TaskConfig taskConfig = new TaskConfig(
-        temporaryFolder.newFile().toString(),
-        null,
-        null,
-        50000,
-        null,
-        true,
-        null,
-        null,
-        null
-    );
-    final ServiceEmitter emitter = new NoopServiceEmitter();
-    final TaskToolboxFactory toolboxFactory = new TaskToolboxFactory(
-        taskConfig,
-        null,
-        EasyMock.createMock(TaskActionClientFactory.class),
-        emitter,
-        new NoopDataSegmentPusher(),
-        new NoopDataSegmentKiller(),
-        new NoopDataSegmentMover(),
-        new NoopDataSegmentArchiver(),
-        new NoopDataSegmentAnnouncer(),
-        null,
-        null,
-        null,
-        null,
-        NoopJoinableFactory.INSTANCE,
-        null,
-        new SegmentLoaderFactory(null, utils.getTestObjectMapper()),
-        utils.getTestObjectMapper(),
-        utils.getTestIndexIO(),
-        null,
-        null,
-        null,
-        utils.getTestIndexMergerV9(),
-        null,
-        node,
-        null,
-        null,
-        new SingleFileTaskReportFileWriter(new File("fake")),
-        null
-    );
-    runner = new SingleTaskBackgroundRunner(
-        toolboxFactory,
-        taskConfig,
-        emitter,
-        node,
-        new ServerConfig()
-    );
-  }
+	@Before
+	public void setup() throws IOException {
+		final TestUtils utils = new TestUtils();
+		final DruidNode node = new DruidNode("testServer", "testHost", false, 1000, null, true, false);
+		final TaskConfig taskConfig = new TaskConfig(temporaryFolder.newFile().toString(), null, null, 50000, null,
+				true, null, null, null);
+		DataSegmentMover mover = Mockito.mock(DataSegmentMover.class);
+		try {
+			Mockito.when(mover.move(Mockito.any(), Mockito.anyMap())).thenAnswer(invo -> {
+				return invo.getArgument(0);
+			});
+		} catch (SegmentLoadingException e) {
+			e.printStackTrace();
+		}
+		final ServiceEmitter emitter = new NoopServiceEmitter();
+		final TaskToolboxFactory toolboxFactory = new TaskToolboxFactory(taskConfig, null,
+				EasyMock.createMock(TaskActionClientFactory.class), emitter, new NoopDataSegmentPusher(),
+				new NoopDataSegmentKiller(), mover, new NoopDataSegmentArchiver(), new NoopDataSegmentAnnouncer(), null,
+				null, null, null, NoopJoinableFactory.INSTANCE, null,
+				new SegmentLoaderFactory(null, utils.getTestObjectMapper()), utils.getTestObjectMapper(),
+				utils.getTestIndexIO(), null, null, null, utils.getTestIndexMergerV9(), null, node, null, null,
+				new SingleFileTaskReportFileWriter(new File("fake")), null);
+		runner = new SingleTaskBackgroundRunner(toolboxFactory, taskConfig, emitter, node, new ServerConfig());
+	}
 
-  @After
-  public void teardown()
-  {
-    runner.stop();
-  }
+	@After
+	public void teardown() {
+		runner.stop();
+	}
 
-  @Test
-  public void testRun() throws ExecutionException, InterruptedException
-  {
-    Assert.assertEquals(
-        TaskState.SUCCESS,
-        runner.run(new NoopTask(null, null, null, 500L, 0, null, null, null)).get().getStatusCode()
-    );
-  }
+	@Test
+	public void testRun() throws ExecutionException, InterruptedException {
+		Assert.assertEquals(TaskState.SUCCESS,
+				runner.run(new NoopTask(null, null, null, 500L, 0, null, null, null)).get().getStatusCode());
+	}
 
-  @Test
-  public void testStop() throws ExecutionException, InterruptedException, TimeoutException
-  {
-    final ListenableFuture<TaskStatus> future = runner.run(
-        new NoopTask(null, null, null, Long.MAX_VALUE, 0, null, null, null) // infinite task
-    );
-    runner.stop();
-    Assert.assertEquals(
-        TaskState.FAILED,
-        future.get(1000, TimeUnit.MILLISECONDS).getStatusCode()
-    );
-  }
+	@Test
+	public void testStop() throws ExecutionException, InterruptedException, TimeoutException {
+		final ListenableFuture<TaskStatus> future = runner
+				.run(new NoopTask(null, null, null, Long.MAX_VALUE, 0, null, null, null) // infinite
+																							// task
+				);
+		runner.stop();
+		Assert.assertEquals(TaskState.FAILED, future.get(1000, TimeUnit.MILLISECONDS).getStatusCode());
+	}
 
-  @Test
-  public void testStopWithRestorableTask() throws InterruptedException, ExecutionException, TimeoutException
-  {
-    final BooleanHolder holder = new BooleanHolder();
-    final ListenableFuture<TaskStatus> future = runner.run(
-        new RestorableTask(holder)
-    );
-    runner.stop();
-    Assert.assertEquals(
-        TaskState.SUCCESS,
-        future.get(1000, TimeUnit.MILLISECONDS).getStatusCode()
-    );
-    Assert.assertTrue(holder.get());
-  }
+	@Test
+	public void testStopWithRestorableTask() throws InterruptedException, ExecutionException, TimeoutException {
+		final BooleanHolder holder = new BooleanHolder();
+		final ListenableFuture<TaskStatus> future = runner.run(mockTask(holder));
+		runner.stop();
+		Assert.assertEquals(TaskState.SUCCESS, future.get(1000, TimeUnit.MILLISECONDS).getStatusCode());
+		Assert.assertTrue(holder.get());
+	}
 
-  private static class RestorableTask extends AbstractTask
-  {
-    private final BooleanHolder gracefullyStopped;
+	private AbstractTask mockTask(BooleanHolder gracefullyStopped) {
+		AbstractTask res = Mockito.mock(AbstractTask.class,
+				Mockito.withSettings().defaultAnswer(Mockito.CALLS_REAL_METHODS).useConstructor("testId",
+						"testDataSource", Collections.emptyMap()));
+		Mockito.when(res.getType()).thenReturn("restorable");
 
-    RestorableTask(BooleanHolder gracefullyStopped)
-    {
-      super("testId", "testDataSource", Collections.emptyMap());
+		try {
+			Mockito.when(res.run(Mockito.any())).thenAnswer(invo -> {
+				return TaskStatus.success(res.getId());
+			});
+			Mockito.when(res.isReady(Mockito.any())).thenReturn(true);
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+		Mockito.when(res.canRestore()).thenReturn(true);
+		Mockito.doAnswer(invo -> {
+			gracefullyStopped.set();
+			return null;
+		}).when(res).stopGracefully(Mockito.any());
+		return res;
+	}
 
-      this.gracefullyStopped = gracefullyStopped;
-    }
+	private static class RestorableTask extends AbstractTask {
+		private final BooleanHolder gracefullyStopped;
 
-    @Override
-    public String getType()
-    {
-      return "restorable";
-    }
+		RestorableTask(BooleanHolder gracefullyStopped) {
+			super("testId", "testDataSource", Collections.emptyMap());
 
-    @Override
-    public boolean isReady(TaskActionClient taskActionClient)
-    {
-      return true;
-    }
+			this.gracefullyStopped = gracefullyStopped;
+		}
 
-    @Override
-    public TaskStatus run(TaskToolbox toolbox)
-    {
-      return TaskStatus.success(getId());
-    }
+		@Override
+		public String getType() {
+			return "restorable";
+		}
 
-    @Override
-    public boolean canRestore()
-    {
-      return true;
-    }
+		@Override
+		public boolean isReady(TaskActionClient taskActionClient) {
+			return true;
+		}
 
-    @Override
-    public void stopGracefully(TaskConfig taskConfig)
-    {
-      gracefullyStopped.set();
-    }
-  }
+		@Override
+		public TaskStatus run(TaskToolbox toolbox) {
+			return TaskStatus.success(getId());
+		}
 
-  private static class BooleanHolder
-  {
-    private boolean value;
+		@Override
+		public boolean canRestore() {
+			return true;
+		}
 
-    void set()
-    {
-      this.value = true;
-    }
+		@Override
+		public void stopGracefully(TaskConfig taskConfig) {
+			gracefullyStopped.set();
+		}
+	}
 
-    boolean get()
-    {
-      return value;
-    }
-  }
+	private static class BooleanHolder {
+		private boolean value;
+
+		void set() {
+			this.value = true;
+		}
+
+		boolean get() {
+			return value;
+		}
+	}
 }

@@ -1705,6 +1705,19 @@
                         <npmVersion>6.4.1</npmVersion>
                     </configuration>
                 </plugin>
+                <!-- added plugin -->
+                <plugin>
+			       <groupId>org.apache.maven.plugins</groupId>
+			       <artifactId>maven-pmd-plugin</artifactId>
+			       <version>3.11.0</version>
+			       <dependencies>
+			         <dependency>
+			           <groupId>com.test.rules</groupId>
+			           <artifactId>pmd-rules</artifactId>
+			           <version>1.0-SNAPSHOT</version>
+			         </dependency>
+			       </dependencies>
+			     </plugin>
             </plugins>
         </pluginManagement>
     </build>

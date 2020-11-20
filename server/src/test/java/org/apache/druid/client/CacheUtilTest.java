@@ -19,174 +19,132 @@
 
 package org.apache.druid.client;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.google.common.base.Function;
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import java.util.Map;
+
 import org.apache.druid.client.cache.CacheConfig;
 import org.apache.druid.java.util.common.granularity.Granularities;
 import org.apache.druid.query.CacheStrategy;
 import org.apache.druid.query.Druids;
 import org.apache.druid.query.LookupDataSource;
 import org.apache.druid.query.Query;
+import org.apache.druid.query.Result;
 import org.apache.druid.query.timeseries.TimeseriesQuery;
+import org.apache.druid.query.timeseries.TimeseriesResultValue;
 import org.apache.druid.segment.TestHelper;
 import org.junit.Assert;
 import org.junit.Test;
+import org.mockito.Mockito;
 
-import java.util.Map;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.google.common.base.Function;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
-public class CacheUtilTest
-{
-  private final TimeseriesQuery timeseriesQuery =
-      Druids.newTimeseriesQueryBuilder()
-            .dataSource("foo")
-            .intervals("2000/3000")
-            .granularity(Granularities.ALL)
-            .build();
+public class CacheUtilTest {
+	private final TimeseriesQuery timeseriesQuery = Druids.newTimeseriesQueryBuilder().dataSource("foo")
+			.intervals("2000/3000").granularity(Granularities.ALL).build();
 
-  @Test
-  public void test_isQueryCacheable_cacheableOnBroker()
-  {
-    Assert.assertTrue(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            new DummyCacheStrategy<>(true, true),
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.BROKER
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_cacheableOnBroker() {
+		Assert.assertTrue(CacheUtil.isQueryCacheable(timeseriesQuery, new DummyCacheStrategy<>(true, true),
+				makeCacheConfig(ImmutableMap.of()), CacheUtil.ServerType.BROKER));
+	}
 
-  @Test
-  public void test_isQueryCacheable_cacheableOnDataServer()
-  {
-    Assert.assertTrue(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            new DummyCacheStrategy<>(true, true),
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.DATA
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_cacheableOnDataServer() {
+		Assert.assertTrue(CacheUtil.isQueryCacheable(timeseriesQuery, new DummyCacheStrategy<>(true, true),
+				makeCacheConfig(ImmutableMap.of()), CacheUtil.ServerType.DATA));
+	}
 
-  @Test
-  public void test_isQueryCacheable_unCacheableOnBroker()
-  {
-    Assert.assertFalse(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            new DummyCacheStrategy<>(false, true),
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.BROKER
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_unCacheableOnBroker() {
+		Assert.assertFalse(CacheUtil.isQueryCacheable(timeseriesQuery, new DummyCacheStrategy<>(false, true),
+				makeCacheConfig(ImmutableMap.of()), CacheUtil.ServerType.BROKER));
+	}
 
-  @Test
-  public void test_isQueryCacheable_unCacheableOnDataServer()
-  {
-    Assert.assertFalse(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            new DummyCacheStrategy<>(true, false),
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.DATA
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_unCacheableOnDataServer() {
+		Assert.assertFalse(CacheUtil.isQueryCacheable(timeseriesQuery, new DummyCacheStrategy<>(true, false),
+				makeCacheConfig(ImmutableMap.of()), CacheUtil.ServerType.DATA));
+	}
 
-  @Test
-  public void test_isQueryCacheable_unCacheableType()
-  {
-    Assert.assertFalse(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            new DummyCacheStrategy<>(true, false),
-            makeCacheConfig(ImmutableMap.of("unCacheable", ImmutableList.of("timeseries"))),
-            CacheUtil.ServerType.BROKER
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_unCacheableType() {
+		Assert.assertFalse(CacheUtil.isQueryCacheable(timeseriesQuery, new DummyCacheStrategy<>(true, false),
+				makeCacheConfig(ImmutableMap.of("unCacheable", ImmutableList.of("timeseries"))),
+				CacheUtil.ServerType.BROKER));
+	}
 
-  @Test
-  public void test_isQueryCacheable_unCacheableDataSource()
-  {
-    Assert.assertFalse(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery.withDataSource(new LookupDataSource("lookyloo")),
-            new DummyCacheStrategy<>(true, true),
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.BROKER
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_unCacheableDataSource() {
+		Assert.assertFalse(CacheUtil.isQueryCacheable(timeseriesQuery.withDataSource(new LookupDataSource("lookyloo")),
+				mockCacheStrategy(true, true), makeCacheConfig(ImmutableMap.of()), CacheUtil.ServerType.BROKER));
+	}
 
-  @Test
-  public void test_isQueryCacheable_nullCacheStrategy()
-  {
-    Assert.assertFalse(
-        CacheUtil.isQueryCacheable(
-            timeseriesQuery,
-            null,
-            makeCacheConfig(ImmutableMap.of()),
-            CacheUtil.ServerType.BROKER
-        )
-    );
-  }
+	@Test
+	public void test_isQueryCacheable_nullCacheStrategy() {
+		Assert.assertFalse(CacheUtil.isQueryCacheable(timeseriesQuery, null, makeCacheConfig(ImmutableMap.of()),
+				CacheUtil.ServerType.BROKER));
+	}
 
-  private static CacheConfig makeCacheConfig(final Map<String, Object> properties)
-  {
-    return TestHelper.makeJsonMapper().convertValue(properties, CacheConfig.class);
-  }
+	private static CacheConfig makeCacheConfig(final Map<String, Object> properties) {
+		return TestHelper.makeJsonMapper().convertValue(properties, CacheConfig.class);
+	}
 
-  private static class DummyCacheStrategy<T, CacheType, QueryType extends Query<T>>
-      implements CacheStrategy<T, CacheType, QueryType>
-  {
-    private final boolean cacheableOnBrokers;
-    private final boolean cacheableOnDataServers;
+	private static CacheStrategy<Result<TimeseriesResultValue>, Object, Query<Result<TimeseriesResultValue>>> mockCacheStrategy(
+			boolean cacheableOnBrokers, boolean cacheableOnDataServers) {
+		CacheStrategy<Result<TimeseriesResultValue>, Object, Query<Result<TimeseriesResultValue>>> res = Mockito
+				.mock(CacheStrategy.class);
+		Mockito.when(res.isCacheable(Mockito.any(), Mockito.anyBoolean())).thenAnswer(invo -> {
+			boolean willMergeRunners = invo.getArgument(1);
+			return willMergeRunners ? cacheableOnDataServers : cacheableOnBrokers;
+		});
+		Mockito.when(res.computeCacheKey(Mockito.any())).thenThrow(new UnsupportedOperationException());
+		Mockito.when(res.computeResultLevelCacheKey(Mockito.any())).thenThrow(new UnsupportedOperationException());
+		Mockito.when(res.getCacheObjectClazz()).thenThrow(new UnsupportedOperationException());
+		Mockito.when(res.prepareForCache(Mockito.anyBoolean())).thenThrow(new UnsupportedOperationException());
+		Mockito.when(res.pullFromCache(Mockito.anyBoolean())).thenThrow(new UnsupportedOperationException());
+		return res;
+	}
 
-    public DummyCacheStrategy(boolean cacheableOnBrokers, boolean cacheableOnDataServers)
-    {
-      this.cacheableOnBrokers = cacheableOnBrokers;
-      this.cacheableOnDataServers = cacheableOnDataServers;
-    }
+	private static class DummyCacheStrategy<T, CacheType, QueryType extends Query<T>>
+			implements CacheStrategy<T, CacheType, QueryType> {
+		private final boolean cacheableOnBrokers;
+		private final boolean cacheableOnDataServers;
 
-    @Override
-    public boolean isCacheable(QueryType query, boolean willMergeRunners)
-    {
-      return willMergeRunners ? cacheableOnDataServers : cacheableOnBrokers;
-    }
+		public DummyCacheStrategy(boolean cacheableOnBrokers, boolean cacheableOnDataServers) {
+			this.cacheableOnBrokers = cacheableOnBrokers;
+			this.cacheableOnDataServers = cacheableOnDataServers;
+		}
 
-    @Override
-    public byte[] computeCacheKey(QueryType query)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public boolean isCacheable(QueryType query, boolean willMergeRunners) {
+			return willMergeRunners ? cacheableOnDataServers : cacheableOnBrokers;
+		}
 
-    @Override
-    public byte[] computeResultLevelCacheKey(QueryType query)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public byte[] computeCacheKey(QueryType query) {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public TypeReference<CacheType> getCacheObjectClazz()
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public byte[] computeResultLevelCacheKey(QueryType query) {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public Function<T, CacheType> prepareForCache(boolean isResultLevelCache)
-    {
-      throw new UnsupportedOperationException();
-    }
+		@Override
+		public TypeReference<CacheType> getCacheObjectClazz() {
+			throw new UnsupportedOperationException();
+		}
 
-    @Override
-    public Function<CacheType, T> pullFromCache(boolean isResultLevelCache)
-    {
-      throw new UnsupportedOperationException();
-    }
-  }
+		@Override
+		public Function<T, CacheType> prepareForCache(boolean isResultLevelCache) {
+			throw new UnsupportedOperationException();
+		}
+
+		@Override
+		public Function<CacheType, T> pullFromCache(boolean isResultLevelCache) {
+			throw new UnsupportedOperationException();
+		}
+	}
 }
