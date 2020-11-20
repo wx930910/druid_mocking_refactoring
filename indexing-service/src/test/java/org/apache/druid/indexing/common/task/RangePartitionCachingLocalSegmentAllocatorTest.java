@@ -19,14 +19,22 @@
 
 package org.apache.druid.indexing.common.task;
 
-import com.google.common.collect.ImmutableList;
-import com.google.common.collect.ImmutableMap;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import javax.annotation.Nullable;
+
 import org.apache.druid.data.input.InputRow;
 import org.apache.druid.indexer.partitions.SingleDimensionPartitionsSpec;
 import org.apache.druid.indexing.common.TaskLock;
 import org.apache.druid.indexing.common.TaskToolbox;
 import org.apache.druid.indexing.common.actions.LockListAction;
 import org.apache.druid.indexing.common.actions.TaskActionClient;
+import org.apache.druid.indexing.common.task.batch.parallel.SupervisorTaskAccess;
 import org.apache.druid.indexing.common.task.batch.partition.RangePartitionAnalysis;
 import org.apache.druid.java.util.common.DateTimes;
 import org.apache.druid.java.util.common.Intervals;
@@ -45,225 +53,175 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
+import org.mockito.Mockito;
 
-import javax.annotation.Nullable;
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 
-public class RangePartitionCachingLocalSegmentAllocatorTest
-{
-  private static final String DATASOURCE = "datasource";
-  private static final String TASKID = "taskid";
-  private static final String SUPERVISOR_TASKID = "supervisor-taskid";
-  private static final String PARTITION_DIMENSION = "dimension";
-  private static final Interval INTERVAL_EMPTY = Intervals.utc(0, 1000);
-  private static final Interval INTERVAL_SINGLETON = Intervals.utc(1000, 2000);
-  private static final Interval INTERVAL_NORMAL = Intervals.utc(2000, 3000);
-  private static final Map<Interval, String> INTERVAL_TO_VERSION = ImmutableMap.of(
-      INTERVAL_EMPTY, "version-empty",
-      INTERVAL_SINGLETON, "version-singleton",
-      INTERVAL_NORMAL, "version-normal"
-  );
-  private static final String PARTITION0 = "0";
-  private static final String PARTITION5 = "5";
-  private static final String PARTITION9 = "9";
-  private static final PartitionBoundaries EMPTY_PARTITIONS = new PartitionBoundaries();
-  private static final PartitionBoundaries SINGLETON_PARTITIONS = new PartitionBoundaries(PARTITION0, PARTITION0);
-  private static final PartitionBoundaries NORMAL_PARTITIONS = new PartitionBoundaries(
-      PARTITION0,
-      PARTITION5,
-      PARTITION9
-  );
+public class RangePartitionCachingLocalSegmentAllocatorTest {
+	private static final String DATASOURCE = "datasource";
+	private static final String TASKID = "taskid";
+	private static final String SUPERVISOR_TASKID = "supervisor-taskid";
+	private static final String PARTITION_DIMENSION = "dimension";
+	private static final Interval INTERVAL_EMPTY = Intervals.utc(0, 1000);
+	private static final Interval INTERVAL_SINGLETON = Intervals.utc(1000, 2000);
+	private static final Interval INTERVAL_NORMAL = Intervals.utc(2000, 3000);
+	private static final Map<Interval, String> INTERVAL_TO_VERSION = ImmutableMap.of(INTERVAL_EMPTY, "version-empty",
+			INTERVAL_SINGLETON, "version-singleton", INTERVAL_NORMAL, "version-normal");
+	private static final String PARTITION0 = "0";
+	private static final String PARTITION5 = "5";
+	private static final String PARTITION9 = "9";
+	private static final PartitionBoundaries EMPTY_PARTITIONS = new PartitionBoundaries();
+	private static final PartitionBoundaries SINGLETON_PARTITIONS = new PartitionBoundaries(PARTITION0, PARTITION0);
+	private static final PartitionBoundaries NORMAL_PARTITIONS = new PartitionBoundaries(PARTITION0, PARTITION5,
+			PARTITION9);
 
-  private static final Map<Interval, PartitionBoundaries> INTERVAL_TO_PARTITONS = ImmutableMap.of(
-      INTERVAL_EMPTY, EMPTY_PARTITIONS,
-      INTERVAL_SINGLETON, SINGLETON_PARTITIONS,
-      INTERVAL_NORMAL, NORMAL_PARTITIONS
-  );
+	private static final Map<Interval, PartitionBoundaries> INTERVAL_TO_PARTITONS = ImmutableMap.of(INTERVAL_EMPTY,
+			EMPTY_PARTITIONS, INTERVAL_SINGLETON, SINGLETON_PARTITIONS, INTERVAL_NORMAL, NORMAL_PARTITIONS);
 
-  private SegmentAllocator target;
-  private SequenceNameFunction sequenceNameFunction;
+	private SegmentAllocator target;
+	private SequenceNameFunction sequenceNameFunction;
 
-  @Rule
-  public ExpectedException exception = ExpectedException.none();
+	@Rule
+	public ExpectedException exception = ExpectedException.none();
 
-  @Before
-  public void setup() throws IOException
-  {
-    TaskToolbox toolbox = createToolbox(
-        INTERVAL_TO_VERSION.keySet()
-                           .stream()
-                           .map(RangePartitionCachingLocalSegmentAllocatorTest::createTaskLock)
-                           .collect(Collectors.toList())
-    );
-    final RangePartitionAnalysis partitionAnalysis = new RangePartitionAnalysis(
-        new SingleDimensionPartitionsSpec(null, 1, PARTITION_DIMENSION, false)
-    );
-    INTERVAL_TO_PARTITONS.forEach(partitionAnalysis::updateBucket);
-    target = SegmentAllocators.forNonLinearPartitioning(
-        toolbox,
-        DATASOURCE,
-        TASKID,
-        new UniformGranularitySpec(Granularities.HOUR, Granularities.NONE, ImmutableList.of()),
-        new SupervisorTaskAccessWithNullClient(SUPERVISOR_TASKID),
-        partitionAnalysis
-    );
-    sequenceNameFunction = ((CachingLocalSegmentAllocator) target).getSequenceNameFunction();
-  }
+	@Before
+	public void setup() throws IOException {
+		TaskToolbox toolbox = createToolbox(INTERVAL_TO_VERSION.keySet().stream()
+				.map(RangePartitionCachingLocalSegmentAllocatorTest::createTaskLock).collect(Collectors.toList()));
+		final RangePartitionAnalysis partitionAnalysis = new RangePartitionAnalysis(
+				new SingleDimensionPartitionsSpec(null, 1, PARTITION_DIMENSION, false));
+		INTERVAL_TO_PARTITONS.forEach(partitionAnalysis::updateBucket);
+		target = SegmentAllocators.forNonLinearPartitioning(toolbox, DATASOURCE, TASKID,
+				new UniformGranularitySpec(Granularities.HOUR, Granularities.NONE, ImmutableList.of()),
+				Mockito.spy(new SupervisorTaskAccess(SUPERVISOR_TASKID, null)), partitionAnalysis);
+		sequenceNameFunction = ((CachingLocalSegmentAllocator) target).getSequenceNameFunction();
+	}
 
-  @Test
-  public void failsIfAllocateFromEmptyInterval()
-  {
-    Interval interval = INTERVAL_EMPTY;
-    InputRow row = createInputRow(interval, PARTITION9);
+	@Test
+	public void failsIfAllocateFromEmptyInterval() {
+		Interval interval = INTERVAL_EMPTY;
+		InputRow row = createInputRow(interval, PARTITION9);
 
-    exception.expect(IllegalStateException.class);
-    exception.expectMessage("Failed to get shardSpec");
+		exception.expect(IllegalStateException.class);
+		exception.expectMessage("Failed to get shardSpec");
 
-    String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
-    allocate(row, sequenceName);
-  }
+		String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
+		allocate(row, sequenceName);
+	}
 
-  @Test
-  public void allocatesCorrectShardSpecsForSingletonPartitions()
-  {
-    Interval interval = INTERVAL_SINGLETON;
-    InputRow row = createInputRow(interval, PARTITION9);
-    testAllocate(row, interval, 0, null);
-  }
+	@Test
+	public void allocatesCorrectShardSpecsForSingletonPartitions() {
+		Interval interval = INTERVAL_SINGLETON;
+		InputRow row = createInputRow(interval, PARTITION9);
+		testAllocate(row, interval, 0, null);
+	}
 
+	@Test
+	public void allocatesCorrectShardSpecsForFirstPartition() {
+		Interval interval = INTERVAL_NORMAL;
+		InputRow row = createInputRow(interval, PARTITION0);
+		testAllocate(row, interval, 0);
+	}
 
-  @Test
-  public void allocatesCorrectShardSpecsForFirstPartition()
-  {
-    Interval interval = INTERVAL_NORMAL;
-    InputRow row = createInputRow(interval, PARTITION0);
-    testAllocate(row, interval, 0);
-  }
+	@Test
+	public void allocatesCorrectShardSpecsForLastPartition() {
+		Interval interval = INTERVAL_NORMAL;
+		InputRow row = createInputRow(interval, PARTITION9);
+		int partitionNum = INTERVAL_TO_PARTITONS.get(interval).size() - 2;
+		testAllocate(row, interval, partitionNum, null);
+	}
 
-  @Test
-  public void allocatesCorrectShardSpecsForLastPartition()
-  {
-    Interval interval = INTERVAL_NORMAL;
-    InputRow row = createInputRow(interval, PARTITION9);
-    int partitionNum = INTERVAL_TO_PARTITONS.get(interval).size() - 2;
-    testAllocate(row, interval, partitionNum, null);
-  }
+	@Test
+	public void getSequenceName() {
+		// getSequenceName_forIntervalAndRow_shouldUseISOFormatAndPartitionNumForRow
+		Interval interval = INTERVAL_NORMAL;
+		InputRow row = createInputRow(interval, PARTITION9);
+		String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
+		String expectedSequenceName = StringUtils.format("%s_%s_%d", TASKID, interval, 1);
+		Assert.assertEquals(expectedSequenceName, sequenceName);
+	}
 
-  @Test
-  public void getSequenceName()
-  {
-    // getSequenceName_forIntervalAndRow_shouldUseISOFormatAndPartitionNumForRow
-    Interval interval = INTERVAL_NORMAL;
-    InputRow row = createInputRow(interval, PARTITION9);
-    String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
-    String expectedSequenceName = StringUtils.format("%s_%s_%d", TASKID, interval, 1);
-    Assert.assertEquals(expectedSequenceName, sequenceName);
-  }
+	@SuppressWarnings("SameParameterValue")
+	private void testAllocate(InputRow row, Interval interval, int bucketId) {
+		String partitionEnd = getPartitionEnd(interval, bucketId);
+		testAllocate(row, interval, bucketId, partitionEnd);
+	}
 
-  @SuppressWarnings("SameParameterValue")
-  private void testAllocate(InputRow row, Interval interval, int bucketId)
-  {
-    String partitionEnd = getPartitionEnd(interval, bucketId);
-    testAllocate(row, interval, bucketId, partitionEnd);
-  }
+	@Nullable
+	private static String getPartitionEnd(Interval interval, int bucketId) {
+		PartitionBoundaries partitions = INTERVAL_TO_PARTITONS.get(interval);
+		boolean isLastPartition = (bucketId + 1) == partitions.size();
+		return isLastPartition ? null : partitions.get(bucketId + 1);
+	}
 
-  @Nullable
-  private static String getPartitionEnd(Interval interval, int bucketId)
-  {
-    PartitionBoundaries partitions = INTERVAL_TO_PARTITONS.get(interval);
-    boolean isLastPartition = (bucketId + 1) == partitions.size();
-    return isLastPartition ? null : partitions.get(bucketId + 1);
-  }
+	private void testAllocate(InputRow row, Interval interval, int bucketId, @Nullable String partitionEnd) {
+		String partitionStart = getPartitionStart(interval, bucketId);
+		testAllocate(row, interval, bucketId, partitionStart, partitionEnd);
+	}
 
-  private void testAllocate(InputRow row, Interval interval, int bucketId, @Nullable String partitionEnd)
-  {
-    String partitionStart = getPartitionStart(interval, bucketId);
-    testAllocate(row, interval, bucketId, partitionStart, partitionEnd);
-  }
+	@Nullable
+	private static String getPartitionStart(Interval interval, int bucketId) {
+		boolean isFirstPartition = bucketId == 0;
+		return isFirstPartition ? null : INTERVAL_TO_PARTITONS.get(interval).get(bucketId);
+	}
 
-  @Nullable
-  private static String getPartitionStart(Interval interval, int bucketId)
-  {
-    boolean isFirstPartition = bucketId == 0;
-    return isFirstPartition ? null : INTERVAL_TO_PARTITONS.get(interval).get(bucketId);
-  }
+	private void testAllocate(InputRow row, Interval interval, int bucketId, @Nullable String partitionStart,
+			@Nullable String partitionEnd) {
+		String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
+		SegmentIdWithShardSpec segmentIdWithShardSpec = allocate(row, sequenceName);
 
-  private void testAllocate(
-      InputRow row,
-      Interval interval,
-      int bucketId,
-      @Nullable String partitionStart,
-      @Nullable String partitionEnd
-  )
-  {
-    String sequenceName = sequenceNameFunction.getSequenceName(interval, row);
-    SegmentIdWithShardSpec segmentIdWithShardSpec = allocate(row, sequenceName);
+		Assert.assertEquals(SegmentId.of(DATASOURCE, interval, INTERVAL_TO_VERSION.get(interval), bucketId),
+				segmentIdWithShardSpec.asSegmentId());
+		RangeBucketShardSpec shardSpec = (RangeBucketShardSpec) segmentIdWithShardSpec.getShardSpec();
+		Assert.assertEquals(PARTITION_DIMENSION, shardSpec.getDimension());
+		Assert.assertEquals(bucketId, shardSpec.getBucketId());
+		Assert.assertEquals(partitionStart, shardSpec.getStart());
+		Assert.assertEquals(partitionEnd, shardSpec.getEnd());
+	}
 
-    Assert.assertEquals(
-        SegmentId.of(DATASOURCE, interval, INTERVAL_TO_VERSION.get(interval), bucketId),
-        segmentIdWithShardSpec.asSegmentId()
-    );
-    RangeBucketShardSpec shardSpec = (RangeBucketShardSpec) segmentIdWithShardSpec.getShardSpec();
-    Assert.assertEquals(PARTITION_DIMENSION, shardSpec.getDimension());
-    Assert.assertEquals(bucketId, shardSpec.getBucketId());
-    Assert.assertEquals(partitionStart, shardSpec.getStart());
-    Assert.assertEquals(partitionEnd, shardSpec.getEnd());
-  }
+	private SegmentIdWithShardSpec allocate(InputRow row, String sequenceName) {
+		try {
+			return target.allocate(row, sequenceName, null, false);
+		} catch (IOException e) {
+			throw new RuntimeException(e);
+		}
+	}
 
-  private SegmentIdWithShardSpec allocate(InputRow row, String sequenceName)
-  {
-    try {
-      return target.allocate(row, sequenceName, null, false);
-    }
-    catch (IOException e) {
-      throw new RuntimeException(e);
-    }
-  }
+	private static TaskToolbox createToolbox(List<TaskLock> taskLocks) {
+		TaskToolbox toolbox = EasyMock.mock(TaskToolbox.class);
+		EasyMock.expect(toolbox.getTaskActionClient()).andStubReturn(createTaskActionClient(taskLocks));
+		EasyMock.replay(toolbox);
+		return toolbox;
+	}
 
-  private static TaskToolbox createToolbox(List<TaskLock> taskLocks)
-  {
-    TaskToolbox toolbox = EasyMock.mock(TaskToolbox.class);
-    EasyMock.expect(toolbox.getTaskActionClient()).andStubReturn(createTaskActionClient(taskLocks));
-    EasyMock.replay(toolbox);
-    return toolbox;
-  }
+	private static TaskActionClient createTaskActionClient(List<TaskLock> taskLocks) {
+		try {
+			TaskActionClient taskActionClient = EasyMock.mock(TaskActionClient.class);
+			EasyMock.expect(taskActionClient.submit(EasyMock.anyObject(LockListAction.class))).andStubReturn(taskLocks);
+			EasyMock.replay(taskActionClient);
+			return taskActionClient;
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+	}
 
-  private static TaskActionClient createTaskActionClient(List<TaskLock> taskLocks)
-  {
-    try {
-      TaskActionClient taskActionClient = EasyMock.mock(TaskActionClient.class);
-      EasyMock.expect(taskActionClient.submit(EasyMock.anyObject(LockListAction.class))).andStubReturn(taskLocks);
-      EasyMock.replay(taskActionClient);
-      return taskActionClient;
-    }
-    catch (IOException e) {
-      throw new UncheckedIOException(e);
-    }
-  }
+	private static TaskLock createTaskLock(Interval interval) {
+		TaskLock taskLock = EasyMock.mock(TaskLock.class);
+		EasyMock.expect(taskLock.getInterval()).andStubReturn(interval);
+		EasyMock.expect(taskLock.getVersion()).andStubReturn(INTERVAL_TO_VERSION.get(interval));
+		EasyMock.replay(taskLock);
+		return taskLock;
+	}
 
-  private static TaskLock createTaskLock(Interval interval)
-  {
-    TaskLock taskLock = EasyMock.mock(TaskLock.class);
-    EasyMock.expect(taskLock.getInterval()).andStubReturn(interval);
-    EasyMock.expect(taskLock.getVersion()).andStubReturn(INTERVAL_TO_VERSION.get(interval));
-    EasyMock.replay(taskLock);
-    return taskLock;
-  }
-
-  private static InputRow createInputRow(Interval interval, String dimensionValue)
-  {
-    long timestamp = interval.getStartMillis();
-    InputRow inputRow = EasyMock.mock(InputRow.class);
-    EasyMock.expect(inputRow.getTimestamp()).andStubReturn(DateTimes.utc(timestamp));
-    EasyMock.expect(inputRow.getTimestampFromEpoch()).andStubReturn(timestamp);
-    EasyMock.expect(inputRow.getDimension(PARTITION_DIMENSION))
-            .andStubReturn(Collections.singletonList(dimensionValue));
-    EasyMock.replay(inputRow);
-    return inputRow;
-  }
+	private static InputRow createInputRow(Interval interval, String dimensionValue) {
+		long timestamp = interval.getStartMillis();
+		InputRow inputRow = EasyMock.mock(InputRow.class);
+		EasyMock.expect(inputRow.getTimestamp()).andStubReturn(DateTimes.utc(timestamp));
+		EasyMock.expect(inputRow.getTimestampFromEpoch()).andStubReturn(timestamp);
+		EasyMock.expect(inputRow.getDimension(PARTITION_DIMENSION))
+				.andStubReturn(Collections.singletonList(dimensionValue));
+		EasyMock.replay(inputRow);
+		return inputRow;
+	}
 }
