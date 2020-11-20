@@ -54,15 +54,6 @@ public class CloseableIteratorTest {
 	@Test
 	public void testFlatMap() throws IOException {
 		List<CloseableIterator<Integer>> innerIterators = new ArrayList<>();
-		// final CloseTrackingCloseableIterator<Integer> actual = new
-		// CloseTrackingCloseableIterator<>(
-		// generateTestIterator(8).flatMap(list -> {
-		// CloseTrackingCloseableIterator<Integer> inner = new
-		// CloseTrackingCloseableIterator<>(
-		// CloseableIterators.withEmptyBaggage(list.iterator()));
-		// innerIterators.add(inner);
-		// return inner;
-		// }));
 		final CloseableIterator<Integer> actual = mockCloseableIterator(generateTestIterator(8).flatMap(list -> {
 			CloseableIterator<Integer> inner = mockCloseableIterator(
 					CloseableIterators.withEmptyBaggage(list.iterator()));
