@@ -68,9 +68,7 @@ public class CloseableIteratorTest {
 		Assert.assertFalse(expected.hasNext());
 		actual.close();
 		Mockito.verify(actual, Mockito.times(1)).close();
-		// Assert.assertEquals(1, actual.closeCount);
 		for (CloseableIterator iter : innerIterators) {
-			// Assert.assertEquals(1, iter.closeCount);
 			Mockito.verify(iter, Mockito.times(1)).close();
 		}
 	}
